@@ -1,0 +1,10 @@
+# 构建产物与本地工作目录
+kernel/
+out/
+AnyKernel3/
+work/
+*.zip
+*.img
+*.tar.gz
+toolchains/
+.ccache/

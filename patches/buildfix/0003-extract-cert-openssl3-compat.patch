@@ -1,0 +1,35 @@
+Subject: [PATCH] build fix: extract-cert with OpenSSL 3.x (no <openssl/engine.h>)
+Generated-against: b2ee0c8f4cd75fbb2097b9bcd8dc3306166f241c (pix106/android_kernel_xiaomi_sdm660_southwest-ng)
+
+这一版补丁是由本仓库脚本从上述 commit 的原始文件精确生成的，
+上下文与空白字符与被 patch 的树完全一致。
+
+---
+--- a/scripts/extract-cert.c
++++ b/scripts/extract-cert.c
+@@ -21,6 +21,17 @@
+ #include <openssl/bio.h>
+ #include <openssl/pem.h>
+ #include <openssl/err.h>
++#include <openssl/opensslv.h>
++
++/*
++ * OpenSSL 3.x deprecates the legacy ENGINE API and OpenSSL 3.5 removed
++ * <openssl/engine.h> entirely.  Kernel builds never pass a "pkcs11:"
++ * source (CONFIG_SYSTEM_TRUSTED_KEYS is a PEM path or empty), so on
++ * OpenSSL 3.x reuse the existing BoringSSL fallback in main() below.
++ */
++#if OPENSSL_VERSION_NUMBER >= 0x30000000L
++#define OPENSSL_IS_BORINGSSL
++#else
+ #include <openssl/engine.h>
+ 
+ /*
+@@ -29,6 +40,7 @@
+  * Remove this if/when that API is no longer used
+  */
+ #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
++#endif
+ 
+ #define PKEY_ID_PKCS7 2
+ 

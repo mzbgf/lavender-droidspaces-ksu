@@ -1,0 +1,117 @@
+name: Build lavender kernel (Droidspaces + reSukiSU)
+
+on:
+  workflow_dispatch:
+    inputs:
+      localversion:
+        description: 'CONFIG_LOCALVERSION 覆盖（留空＝沿用 ROM 线的 -SouthWest-NG-0.19.4）'
+        required: false
+        default: ''
+  push:
+    branches: [main]
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+env:
+  KERNEL_REPO: https://github.com/pix106/android_kernel_xiaomi_sdm660_southwest-ng
+  # main == refs/heads/0.19.4 == 这个 commit；换 ROM 版本时改这里
+  KERNEL_PIN: b2ee0c8f4cd75fbb2097b9bcd8dc3306166f241c
+  RESUKISU_TAG: v4.2.0-rc2
+  KERNEL_DIR: ${{ github.workspace }}/kernel
+  CCACHE_MAXSIZE: 2G
+  CCACHE_COMPILERCHECK: content
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout 配方仓库
+        uses: actions/checkout@v4
+
+      - name: 释放磁盘空间（runner 自带仅 14 GB）
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          swap-storage: true
+
+      - name: 安装构建依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison flex libssl-dev zip unzip lz4 xz-utils ccache python3
+
+      - name: 拉取内核源码（固定 commit）
+        run: |
+          mkdir -p "$KERNEL_DIR"
+          cd "$KERNEL_DIR"
+          git init -q
+          git remote add origin "$KERNEL_REPO"
+          git fetch --depth 1 origin "$KERNEL_PIN"
+          git checkout -q FETCH_HEAD
+          echo "HEAD = $(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "$KERNEL_PIN"
+
+      - name: 缓存 clang 工具链
+        uses: actions/cache@v4
+        with:
+          path: toolchains/clang
+          key: clang-${{ runner.os }}-r416183b
+
+      - name: 准备 clang 工具链
+        run: bash scripts/setup-toolchain.sh
+
+      - name: 缓存 ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-${{ env.KERNEL_PIN }}-${{ env.RESUKISU_TAG }}
+          restore-keys: ccache-${{ runner.os }}-
+
+      - name: 构建（补丁 → 合配置 → 校验 → 编译 → 打包）
+        env:
+          CC_CMD: ccache clang
+          LOCALVERSION_OVERRIDE: ${{ inputs.localversion }}
+        run: bash scripts/build.sh
+
+      - name: 构建摘要
+        if: always()
+        run: |
+          {
+            echo "### lavender + Droidspaces + reSukiSU"
+            echo
+            echo "- 内核源码: \`$KERNEL_REPO\`"
+            echo "- 固定 commit: \`$KERNEL_PIN\`"
+            echo "- reSukiSU: \`$RESUKISU_TAG\`（manual hook，SUSFS 关闭）"
+            if [ -f "$KERNEL_DIR/include/config/kernel.release" ]; then
+              echo "- kernelrelease: \`$(cat "$KERNEL_DIR/include/config/kernel.release")\`"
+            fi
+            ls -lh AnyKernel3-lavender-*.zip 2>/dev/null || echo "- 未生成刷机包"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 上传刷机包
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnyKernel3-lavender
+          if-no-files-found: error
+          path: |
+            AnyKernel3-lavender-*.zip
+            kernel/out/build.log
+            kernel/out/.config
+
+      - name: 发布 Release（仅打 tag 时）
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: AnyKernel3-lavender-*.zip
+          generate_release_notes: true
+          body: |
+            内核源码固定于 `${{ env.KERNEL_PIN }}`（pix106/android_kernel_xiaomi_sdm660_southwest-ng，4.19.325）。
+            内含 Droidspaces 非 GKI 配置与补丁、reSukiSU ${{ env.RESUKISU_TAG }}（manual hook，未启用 SUSFS）。
+            在 recovery 里直刷；刷前请备份 boot 分区。详见仓库 README。
