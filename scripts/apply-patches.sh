@@ -34,7 +34,7 @@ for row in "${TABLE[@]}"; do
   IFS='|' read -r rel target marker name cond <<<"$row"
   pfile="$PATCHES_DIR/$rel"
   [ -f "$pfile" ] || die "缺少补丁文件: $pfile"
-  [ -f "$target" ] || die "目标文件不存在: $target（补丁与源码树不匹配）"
+  [ -f "$target" ] || die "目标文件不存在: ${target}（补丁与源码树不匹配）"
 
   if [ "$cond" = "openssl3" ] && has_openssl_engine_h; then
     log "跳过（本机 OpenSSL 仍提供 engine.h，无需该修正）: $name"

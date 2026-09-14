@@ -23,7 +23,7 @@ else
 fi
 
 head_sha="$(git -C "$KERNEL_DIR" rev-parse HEAD)"
-[ "$head_sha" = "$KERNEL_PIN" ] || die "源码 commit 不匹配：期望 $KERNEL_PIN，实际 $head_sha"
+[ "$head_sha" = "$KERNEL_PIN" ] || die "源码 commit 不匹配：期望 ${KERNEL_PIN}，实际 ${head_sha}"
 log "源码 commit 校验通过: $head_sha"
 
 bash "$REPO_ROOT/scripts/setup-toolchain.sh"

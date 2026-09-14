@@ -15,7 +15,7 @@ fi
 # dtb 必须真的是 lavender 的（dts 里的 model / compatible 字符串在未压缩的 dtb 段里可直接 grep）
 LAV_MODEL="Qualcomm Technologies, Inc. SDM 660 PM660 + PM660L MTP F7A"
 if ! grep -qa "$LAV_MODEL" "$IMG"; then
-  die "镜像里找不到 lavender 的 dtb（$LAV_MODEL）——设备不会启动"
+  die "镜像里找不到 lavender 的 dtb（${LAV_MODEL}）——设备不会启动"
 fi
 log "含 lavender dtb ✔  ($LAV_MODEL)"
 

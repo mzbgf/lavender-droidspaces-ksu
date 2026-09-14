@@ -40,7 +40,7 @@ bash "$REPO_ROOT/scripts/apply-patches.sh"
 bash "$REPO_ROOT/scripts/merge-configs.sh"
 bash "$REPO_ROOT/scripts/check-configs.sh"
 
-log "开始编译（-j$JOBS）"
+log "开始编译（-j${JOBS}）"
 {
   # 先单独构建 dtbs：Image.gz-dtb 的依赖 DTB_OBJS 是在 Makefile 解析期用 find
   # 计算的，第一次调用时 out/ 里还没有 .dtb，会拼出不含 dtb 的镜像

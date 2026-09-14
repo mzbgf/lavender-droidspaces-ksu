@@ -14,8 +14,14 @@ source "$(dirname "$0")/lib.sh"
 CFG="${1:-$OUT_DIR/.config}"
 require_file "$CFG"
 
-get() { grep -E "^CONFIG_$1=" "$CFG" | tail -1 | cut -d= -f2; }
-isset() { grep -qE "^CONFIG_$1=" "$CFG"; }
+get() {
+  # 注意：lib.sh 开了 pipefail，config 里不存在的符号会让 grep 返回 1；
+  # 必须吞掉这个状态，否则 set -e 会让整个校验脚本在这里中止
+  local v
+  v="$(grep -E "^CONFIG_$1=" "$CFG" 2>/dev/null | tail -1 | cut -d= -f2)" || v=""
+  printf '%s' "$v"
+}
+isset() { grep -qE "^CONFIG_$1=" "$CFG" 2>/dev/null; }
 
 rc=0
 pass() { echo "  OK    $*"; }
@@ -26,13 +32,13 @@ warn_() { echo "  WARN  $*"; }
 check_y() {
   local entry="$1" name alt v av
   name="${entry%%,*}"; alt=""
-  [ "$entry" != "$name" ] && alt="${entry#*,}"
+  if [ "$entry" != "$name" ]; then alt="${entry#*,}"; fi
   v="$(get "$name")"
-  if [ "$v" = "y" ]; then pass "$name=y"; return; fi
-  if [ "$alt" = "M" ]; then pass "$name 本树无此符号（放行）"; return; fi
+  if [ "$v" = "y" ]; then pass "$name=y"; return 0; fi
+  if [ "$alt" = "M" ]; then pass "$name 本树无此符号（放行）"; return 0; fi
   if [ -n "$alt" ]; then
     av="$(get "$alt")"
-    [ "$av" = "y" ] && { pass "$name (由 $alt=y 提供)"; return; }
+    if [ "$av" = "y" ]; then pass "$name (由 $alt=y 提供)"; return 0; fi
   fi
   fail "$name -> '${v:-未设置}' (期望 y)"
 }
@@ -75,7 +81,7 @@ for s in MODULES KPROBES; do
   if [ "$v" = "y" ]; then fail "$s=y（目标 ROM 的 stock 内核为 n）"; else pass "$s 未启用"; fi
 done
 v="$(get ANDROID_PARANOID_NETWORK)"
-if [ -z "$v" ] || [ "$v" = "n" ]; then pass "ANDROID_PARANOID_NETWORK 未启用"; else fail "ANDROID_PARANOID_NETWORK=$v（期望 n）"; fi
+if [ -z "$v" ] || [ "$v" = "n" ]; then pass "ANDROID_PARANOID_NETWORK 未启用"; else fail "ANDROID_PARANOID_NETWORK=${v}（期望 n）"; fi
 
 if [ -n "${LOCALVERSION_EXPECT:-}" ]; then
   v="$(grep -E '^CONFIG_LOCALVERSION=' "$CFG" | tail -1 | cut -d'"' -f2)"
