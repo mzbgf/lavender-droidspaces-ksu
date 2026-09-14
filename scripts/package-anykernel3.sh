@@ -20,7 +20,7 @@ if [ ! -f "$IMG" ] || ! grep -qa "$LAV_MODEL" "$IMG"; then
 fi
 grep -qa "$LAV_MODEL" "$IMG" || die "拼接后仍找不到 lavender dtb"
 
-KREL="${KERNEL_RELEASE:-$(cat "$KERNEL_DIR/include/config/kernel.release" 2>/dev/null || echo 4.19.325)}"
+KREL="${KERNEL_RELEASE:-$(kernel_release || echo 4.19.325)}"
 
 # 2) 准备 AnyKernel3
 if [ ! -d "$ANY_KERNEL_DIR/.git" ]; then
@@ -37,11 +37,27 @@ bash -n "$ANY_KERNEL_DIR/anykernel.sh" || die "anykernel.sh 语法检查失败"
 # 4) 放入内核镜像并打包
 cp -f "$IMG" "$ANY_KERNEL_DIR/Image.gz-dtb"
 rm -rf "$ANY_KERNEL_DIR/.git" "$ANY_KERNEL_DIR/modules"
+
+# 防呆：ak3-core.sh 按 zImage → Image → Image.gz → Image.gz-dtb … 的固定顺序挑
+# 第一个存在的内核镜像文件，一旦目录里混进别的同名占位文件，刷进去的就不是我们的
+# 内核（且不会有任何报错）。这里显式清掉除 Image.gz-dtb 之外的所有候选名。
+for name in zImage zImage-dtb Image Image-dtb Image.gz Image.bz2 Image.bz2-dtb \
+            Image.lzo Image.lzo-dtb Image.lzma Image.lzma-dtb Image.xz Image.xz-dtb \
+            Image.lz4 Image.lz4-dtb Image.fit; do
+  [ "$name" = "Image.gz-dtb" ] && continue
+  if [ -e "$ANY_KERNEL_DIR/$name" ]; then
+    warn "删除 AnyKernel3 里多余的镜像占位文件: $name"
+    rm -f "$ANY_KERNEL_DIR/$name"
+  fi
+done
+[ -f "$ANY_KERNEL_DIR/Image.gz-dtb" ] || die "AnyKernel3 目录里没有 Image.gz-dtb"
+
 ZIP="$REPO_ROOT/AnyKernel3-lavender-${KREL}-$(date +%Y%m%d).zip"
 rm -f "$ZIP"
+# 命令与 AnyKernel3 官方 README 一致（排除 README 与所有 *placeholder 占位文件）
 (
   cd "$ANY_KERNEL_DIR"
-  zip -r9 "$ZIP" . -x '*.placeholder' './README.md' './.git*' >/dev/null
+  zip -r9 "$ZIP" * -x README.md '*placeholder' >/dev/null
 )
 
 # 5) 校验 zip 结构

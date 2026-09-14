@@ -59,7 +59,12 @@ if [ -f "$OUT_DIR/vmlinux" ]; then
   fi
 fi
 
-# 版本串（模块 vermagic 的依据）
-if [ -f "$KERNEL_DIR/include/config/kernel.release" ]; then
-  log "kernelrelease = $(cat "$KERNEL_DIR/include/config/kernel.release")"
+# 版本串（模块 vermagic 的依据，也是 uname -r 会显示的值）
+if rel="$(kernel_release)"; then
+  log "kernelrelease = $rel"
+  expect_lv="$(grep -E '^CONFIG_LOCALVERSION=' "$OUT_DIR/.config" 2>/dev/null | tail -1 | cut -d'"' -f2 || true)"
+  case "$rel" in
+    *"$expect_lv"*) log "版本串里含 LOCALVERSION=«$expect_lv» ✔" ;;
+    *) die "kernelrelease 里不含 LOCALVERSION（$expect_lv）——版本串不对" ;;
+  esac
 fi

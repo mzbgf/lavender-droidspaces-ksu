@@ -89,8 +89,9 @@ jobs:
             echo "- 内核源码: \`$KERNEL_REPO\`"
             echo "- 固定 commit: \`$KERNEL_PIN\`"
             echo "- reSukiSU: \`$RESUKISU_TAG\`（manual hook，SUSFS 关闭）"
-            if [ -f "$KERNEL_DIR/include/config/kernel.release" ]; then
-              echo "- kernelrelease: \`$(cat "$KERNEL_DIR/include/config/kernel.release")\`"
+            rel="kernel/out/include/config/kernel.release"
+            if [ -s "$rel" ]; then
+              echo "- kernelrelease: \`$(cat "$rel")\`"
             fi
             ls -lh AnyKernel3-lavender-*.zip 2>/dev/null || echo "- 未生成刷机包"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -102,6 +103,8 @@ jobs:
         with:
           name: AnyKernel3-lavender
           if-no-files-found: warn
+          # .config 是隐藏文件，默认会被跳过，必须显式开启
+          include-hidden-files: true
           path: |
             AnyKernel3-lavender-*.zip
             kernel/out/build.log

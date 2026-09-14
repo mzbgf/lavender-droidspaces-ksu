@@ -38,3 +38,13 @@ install_fragments() {
   cp "$REPO_ROOT"/configs/*.config "$dest"/
   echo "$dest"
 }
+
+# 内核版本串（uname -r）。O=out 构建时权威文件在 $OUT_DIR/include/config/ 下，
+# 读源码树里的同名文件会拿到空值（曾导致刷机包名与 kernel.string 退化成 "4.19.325"）。
+kernel_release() {
+  local f
+  for f in "$OUT_DIR/include/config/kernel.release" "$KERNEL_DIR/include/config/kernel.release"; do
+    if [ -s "$f" ]; then cat "$f"; return 0; fi
+  done
+  return 1
+}
