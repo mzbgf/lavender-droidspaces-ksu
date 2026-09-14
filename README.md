@@ -40,9 +40,19 @@ lavender 出厂内核是 4.4，但 **Android 16 在 lavender 上没有 4.4 生�
 | 内核版本 | 4.19.325，`CONFIG_LOCALVERSION="-SouthWest-NG-0.19.4"` |
 | 为什么是它 | 它就是 lavender 的 A16 ROM 实际使用的内核线；ROM 设备树声明的 `vendor/xiaomi/sdm660_defconfig` + `vendor/xiaomi/lavender.config` + `Image.gz-dtb` 与本仓库布局逐项吻合；全树没有任何 KernelSU/SUSFS 代码，基座干净 |
 
-**版本串对齐**：模块 vermagic 由内核版本串决定。因为基线就是 ROM 自己的源码线，
-保持 `CONFIG_LOCALVERSION` 不变即可让 ROM 现存的模块继续加载。
-构建时 CI 会打印 `kernelrelease`，请与手机的 `uname -r`（设置 → 关于手机 → 内核版本）比对。
+**版本串（`uname -r`）**：树根本身带 `localversion-cip`（`-cip135`）与
+`localversion-st`（`-st19`）两个文件，kbuild 会把它们接在 `CONFIG_LOCALVERSION`
+之前，所以本配方构建出的版本串是：
+
+```
+4.19.325-cip135-st19-SouthWest-NG-0.19.4
+```
+
+本树 defconfig 是 `# CONFIG_MODULES is not set`（驱动全部内建），所以正常情况下
+ROM 侧没有需要匹配 vermagic 的 `.ko`，版本串只影响 `uname -r` 的显示。但如果你
+的 ROM 确实带着内核对侧模块（或你换了别的基础树），就必须让它与 ROM 完全一致：
+构建时 CI 会打印 `kernelrelease`，请与手机的 `uname -r`（设置 → 关于手机 →
+内核版本）逐字比对，不一致时按 `configs/00-rom-align.config` 里的两种办法处理。
 
 ---
 
@@ -141,6 +151,20 @@ patches/                      全部补丁（来源与必要性见 patches/READM
 scripts/                      构建脚本（CI 与本地共用同一套）
 anykernel/anykernel.sh        适配 lavender 的 AnyKernel3 脚本模板
 ```
+
+## 改配置时的一条硬约束（踩过的坑）
+
+`scripts/kconfig/merge_config.sh` 的合并方式是：从片段里解析出**带前缀的符号名**，
+对每个符号执行「删掉基座 defconfig 里的同名行」，再把片段整段追加。所以——
+
+> **片段里任何位置出现带 `CONFIG_` 前缀的符号名（哪怕在注释里、哪怕是被 `#` 注释掉的赋值行），都会让基座里那一项被删掉**；如果片段里没有同名真配置行补回来，该项就会悄悄退回 Kconfig 默认值。
+
+本仓库第一次云编译就被这个坑清掉了 `CONFIG_LOCALVERSION`，导致 `uname -r` 少了
+`-SouthWest-NG-0.19.4`（日志里表现为 `Value of CONFIG_LOCALVERSION is redefined ...`）。
+现在的防线有两道，改配置时请遵守：
+
+1. **注释里只写符号名本身**（写 `LOCALVERSION`、`MEMCG`），需要示范完整写法时用占位符 `CONFIG_<符号>`；合法的真配置行只有 `CONFIG_<符号>=y` 和 `# CONFIG_<符号> is not set` 两种。`scripts/merge-configs.sh` 里的 `lint_fragments` 会硬校验，违规直接构建失败。
+2. `scripts/check-configs.sh` 会从基座 defconfig 读出应有的 `LOCALVERSION` 并与合并结果逐字比对，值被改动就立刻报错。
 
 ## 许可与致谢
 

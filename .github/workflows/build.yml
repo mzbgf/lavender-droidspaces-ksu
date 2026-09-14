@@ -96,10 +96,12 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: 上传刷机包
+        # 即使前面失败也上传，方便诊断（例如只有 Image.gz-dtb / .config / build.log）
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: AnyKernel3-lavender
-          if-no-files-found: error
+          if-no-files-found: warn
           path: |
             AnyKernel3-lavender-*.zip
             kernel/out/build.log

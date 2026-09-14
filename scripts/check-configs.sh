@@ -83,10 +83,18 @@ done
 v="$(get ANDROID_PARANOID_NETWORK)"
 if [ -z "$v" ] || [ "$v" = "n" ]; then pass "ANDROID_PARANOID_NETWORK 未启用"; else fail "ANDROID_PARANOID_NETWORK=${v}（期望 n）"; fi
 
-if [ -n "${LOCALVERSION_EXPECT:-}" ]; then
-  v="$(grep -E '^CONFIG_LOCALVERSION=' "$CFG" | tail -1 | cut -d'"' -f2)"
-  if [ "$v" = "$LOCALVERSION_EXPECT" ]; then pass "LOCALVERSION=\"$v\""
-  else fail "LOCALVERSION=\"$v\"（期望 \"$LOCALVERSION_EXPECT\"，模块 vermagic 会不匹配）"; fi
+# 版本串必须与基座 defconfig 保持一致：merge_config.sh 曾把基座里的
+# LOCALVERSION 行删掉（因为片段注释里出现了带前缀的符号名），这里做兜底断言。
+BASE_DEFCONFIG="$KERNEL_DIR/arch/arm64/configs/vendor/xiaomi/sdm660_defconfig"
+if [ -f "$BASE_DEFCONFIG" ]; then
+  expect_lv="$(grep -E '^CONFIG_LOCALVERSION=' "$BASE_DEFCONFIG" | tail -1 | cut -d'"' -f2)"
+  [ -n "${LOCALVERSION_OVERRIDE:-}" ] && expect_lv="$LOCALVERSION_OVERRIDE"
+  got_lv="$(grep -E '^CONFIG_LOCALVERSION=' "$CFG" | tail -1 | cut -d'"' -f2)"
+  if [ "$got_lv" = "$expect_lv" ]; then
+    pass "LOCALVERSION=\"${got_lv}\""
+  else
+    fail "LOCALVERSION=\"${got_lv}\"（期望 \"${expect_lv}\"）——版本串被改动，uname -r 会与 ROM 不一致"
+  fi
 fi
 
 echo "=== 防火墙/UFW 支持（告警级） ==="

@@ -38,15 +38,24 @@ if [ -f "$OUT_DIR/build.log" ] && grep -q "susfs" "$OUT_DIR/build.log"; then
   die "构建日志里出现了 susfs（要求完全不编译 SUSFS）"
 fi
 
-# KSU 符号（vmlinux 存在时）
-NM=""
-command -v llvm-nm >/dev/null 2>&1 && NM=llvm-nm
-[ -z "$NM" ] && command -v nm >/dev/null 2>&1 && NM=nm
-if [ -n "$NM" ] && [ -f "$OUT_DIR/vmlinux" ]; then
-  if "$NM" "$OUT_DIR/vmlinux" 2>/dev/null | grep -qi " ksu_"; then
-    log "vmlinux 里存在 KSU 符号 ✔"
+# KSU 必须真的编进了内核。这里刻意**不用 nm 查符号**：本树开着 LTO + CFI，
+# 局部符号会被内联/内部化而消失（CI 第一次就是这样误报的）。改为查两条硬证据：
+#   1) 构建日志里 reSukiSU 明确走了 manual hook，且算出了版本号；
+#   2) vmlinux 里能搜到 KSU 的版本串（KSU_VERSION_FULL 里带 @ReSukiSU）。
+require_file "$OUT_DIR/build.log"
+grep -qF -- "-- ReSukiSU: using Manual Hook" "$OUT_DIR/build.log" \
+  || die "构建日志里没有 'using Manual Hook'：hook 方式不对（4.19 非 GKI 必须 manual hook）"
+grep -qE -- "-- ReSukiSU version code: [0-9]+" "$OUT_DIR/build.log" \
+  || die "构建日志里没有 reSukiSU 版本号：驱动可能没接进构建"
+ksu_objs="$(grep -cE 'CC +drivers/kernelsu/' "$OUT_DIR/build.log" || true)"
+[ "${ksu_objs:-0}" -gt 0 ] || die "构建日志里没有编译任何 drivers/kernelsu/*.o"
+log "reSukiSU 已编入内核：${ksu_objs} 个目标文件，hook 方式 = manual"
+
+if [ -f "$OUT_DIR/vmlinux" ]; then
+  if grep -qa "@ReSukiSU" "$OUT_DIR/vmlinux" || { [ -f "$BOOT/Image" ] && grep -qa "@ReSukiSU" "$BOOT/Image"; }; then
+    log "内核镜像含 reSukiSU 版本串 ✔"
   else
-    die "vmlinux 里找不到 KSU 符号（root 不会生效）"
+    die "vmlinux / Image 里搜不到 reSukiSU 版本串"
   fi
 fi
 

@@ -17,6 +17,35 @@ cd "$KERNEL_DIR"
 DEST="$(install_fragments)"
 log "片段已拷入: $DEST"
 
+# ------------------------------------------------------------
+# 片段硬校验：merge_config.sh 会把片段里「带完整前缀的符号名」当成配置项，
+# 据此删掉基座 defconfig 里的同名行——注释里出现同样会触发，结果是该项悄悄
+# 退回 Kconfig 默认值（本仓库的 LOCALVERSION 就这样被清空过一次，导致
+# kernelrelease 丢掉了 -SouthWest-NG-0.19.4）。
+# 因此规定：片段里只允许两种带前缀的真配置行，其余情况一律报错。
+# ------------------------------------------------------------
+lint_fragments() {
+  local f line ln bad=0
+  for f in "$DEST"/*.config; do
+    ln=0
+    while IFS= read -r line || [ -n "$line" ]; do
+      ln=$((ln + 1))
+      case "$line" in
+        "") continue ;;
+        CONFIG_*=*) continue ;;
+        "# CONFIG_"*" is not set") continue ;;
+      esac
+      if printf '%s\n' "$line" | grep -qE 'CONFIG_[A-Za-z0-9_]+'; then
+        warn "${f##*/}:${ln} 非配置行里出现带前缀的符号名（会删掉基座同名项）：$line"
+        bad=$((bad + 1))
+      fi
+    done <"$f"
+  done
+  [ "$bad" -eq 0 ] || die "config 片段里有 $bad 处违规：注释只写符号名本身，或用 CONFIG_<符号> 占位形式"
+  log "config 片段校验通过 ✔"
+}
+lint_fragments
+
 BASE=(
   arch/arm64/configs/vendor/xiaomi/sdm660_defconfig
   arch/arm64/configs/vendor/xiaomi/lavender.config
