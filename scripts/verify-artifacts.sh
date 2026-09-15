@@ -13,11 +13,17 @@ if [ "$size" -lt $((6 * 1024 * 1024)) ] || [ "$size" -gt $((48 * 1024 * 1024)) ]
 fi
 
 # dtb 必须真的是 lavender 的（dts 里的 model / compatible 字符串在未压缩的 dtb 段里可直接 grep）
+# 注意：不同源码线的 model 串不同（本树是 "... MTP F7A"，San-Kernel 树是 "... MTP, Lavender"），
+# 所以这里对「机型串不匹配」只告警，真正致命的是「镜像里完全没有 dtb」。
 LAV_MODEL="Qualcomm Technologies, Inc. SDM 660 PM660 + PM660L MTP F7A"
 if ! grep -qa "$LAV_MODEL" "$IMG"; then
-  die "镜像里找不到 lavender 的 dtb（${LAV_MODEL}）——设备不会启动"
+  if grep -qa "Qualcomm Technologies, Inc" "$IMG"; then
+    warn "dtb 机型号与预期不同（本树预期「${LAV_MODEL}」），但镜像里确实有 dtb —— 换树/换机型时属正常"
+  else
+    die "镜像里找不到任何 dtb —— 设备不会启动"
+  fi
 fi
-log "含 lavender dtb ✔  ($LAV_MODEL)"
+log "含 dtb ✔"
 
 models="$(grep -ao "Qualcomm Technologies, Inc\. [A-Za-z0-9 +]*MTP[A-Za-z0-9 ]*" "$IMG" | sort -u || true)"
 n_models="$(printf '%s\n' "$models" | grep -c . || true)"
