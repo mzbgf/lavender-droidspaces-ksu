@@ -145,38 +145,45 @@ bash scripts/build-local.sh    # 拉源码（按固定 commit）→ 装工具链
 
 ## 构建状态：已验证 / 未验证
 
-**已验证（本地产物 + 真机 `fastboot boot`，逐项有证据）**
+**已验证（真机 `fastboot boot` 实测，逐项有证据）**
 
 内核侧（构建产物中直接核验）：
 
 - 内核编译通过，`Image.gz-dtb` 12.8 MiB，产物 `uname -r` 为
   `4.19.325-st20-San-Kernel-Aegis-R1.1.108`；
 - 镜像里含 lavender 的 dtb（型号串 `… SDM 660 PM660 + PM660L MTP, Lavender`，1 个 dtb）；
-- reSukiSU 确实编入内核：34 个 `drivers/kernelsu/*.o`、构建日志 `using Manual Hook`、
+- reSukiSU 确实编入内核：`drivers/kernelsu/*.o` 有编译、构建日志 `using Manual Hook`、
   内核侧版本号 35144、镜像里能搜到 `@ReSukiSU` 版本串；
 - `CONFIG_KSU_SUSFS` 未启用，构建日志里没有任何 susfs 的编译；
 - Droidspaces 核心项、网络隔离项、KernelSU 项、开机关键项全部由 `check-configs.sh`
   逐项断言，任一失败即构建失败。
 
-真机侧（`fastboot boot` 临时启动，`scripts/verify-on-device.sh` 自动检查，15 项全过）：
+真机侧（`fastboot boot` 临时启动 + `scripts/verify-on-device.sh` 自动检查 15 项全过，
+并由使用者实际使用确认）：
 
 - `uname -r` 与产物一致；`/proc/cmdline` 带本次注入的临时标记，确认跑的就是这份镜像；
+- **稳定性**：连续在线约 20 分钟（uptime 1188s）无 oops / panic，`kshrinkd0` 线程存活，
+  `dmesg` 里 0 条 `Unable to handle` / `Kernel panic`。对照：修 `buildfix/0004` 之前，
+  同一台机器稳定在开机 **53 秒**时因 `shrink_slab_memcg` 空指针 oops 而 panic 重启；
+- **root 可用**：装与内核同版本的 reSukiSU 管理器（`v4.2.0-rc2` / 35144）后
+  `su -c id` 返回 `uid=0(root) … context=u:r:ksu:s0`，`/system/bin/su` 由 KSU 挂载出来；
+  （版本错配会失败：管理器版本必须 ≥ 内核侧 KSU 版本，这一点写进了排错表）
 - **Droidspaces 依赖的运行时能力全部就绪**：cgroup 控制器 `devices`/`pids`/`memory`/
   `freezer`/`net_prio` 都在 `/proc/cgroups` 里；`overlay` 文件系统可用；
   `ipc`/`mnt`/`net`/`pid`/`user`/`uts` 六个 namespace 都在 `/proc/self/ns` 里；
-- 网络接口已就绪，`boot` 分区节点可读（回滚用）。
+- **Droidspaces 实际可用**：能创建 `Alpine minimal` 容器并通过 NAT 联网；
+- 日常功能正常：Wi-Fi、蓝牙、移动信号、触摸、相机。
 
-作为对照：设备上原先那个内核（San-Kernel 官方发布版）**没有** `CONFIG_KSU`，
-`cgroup devices/pids/net_prio` 与 `ipc/pid/user/uts` namespace 也都不可见 ——
-也就是说它跑不了 Droidspaces、也不带 root。本配方的产物把这两块都补上了。
+作为对照：设备上原先那个内核（San-Kernel 官方发布版）不带本配方的 KSU 与管理器匹配版本，
+`cgroup devices/pids/net_prio` 与 `ipc/pid/user/uts` namespace 也不可见。
 
-**未验证（需要你在真机上确认）**
+**未验证（需要你自己确认）**
 
-- 刷入后能否长期稳定运行（目前只做了 `fastboot boot` 的临时启动验证，**没有实际写入 boot 分区**）；
-- wlan / 蓝牙 / 移动信号是否正常；
-- 装 reSukiSU 管理器后 `su -c id` 是否返回 uid=0；
-- Droidspaces 应用内的 Requirements Check 是否全绿、发行版容器能否真正起来；
-- 触摸、通话、相机等日常功能。
+- **实际刷入 boot 分区**后的表现（目前全部验证都走 `fastboot boot` 临时启动，从未写入分区）。
+  临时启动与真实刷入共用同一份内核与同一个 ramdisk，但刷入后还牵涉 recovery 的
+  AnyKernel3 流程；
+- Droidspaces 的「高级硬件功能」（GPU / 直接硬件访问等）尚未测试；
+- 长时间（数天）使用与待机功耗表现。
 
 刷机前请务必读完下一节的备份与回滚步骤。
 
@@ -276,6 +283,7 @@ su -c 'droidspaces check'         # 等价于 App 里的 Requirements Check
 | `droidspaces check` 有红叉 | 看 CI 里 `check-configs.sh` 的输出；容器网络不通多半是 NAT 相关项缺失 |
 | 进不去 root / KSU safe mode | 本树 `CONFIG_KPROBES` 已关闭；若仍进 safe mode，检查 hook 是否被上游改动影响 |
 | 刷完屏幕只剩背光、一直卡着 | 本基座 defconfig 里 `PANIC_ON_OOPS` 是开的、`PANIC_TIMEOUT` 是 `-1`：任何 oops 都会立刻 panic 且永不自动重启。已由 `configs/30-boot-compat.config` 改成「oops 只杀任务 + panic 后 5 秒重启」。真正的 panic 日志去 recovery 里读 `/sys/fs/pstore/console-ramoops-0` |
+| 装好管理器后 `su` 仍不可用 / 管理器报「版本过低」 | 管理器版本必须 **≥ 内核侧 KSU 版本**（本产物为 35144，对应 reSukiSU `v4.2.0-rc2`）。升级管理器后**必须再重启一次**：KSU 的 `su`/`ksud` 用户态是在开机 `post-fs-data` 阶段建立的，只在当前这次启动中升级 APK 不会生效。成功判据：`su -c id` 返回 `uid=0 … context=u:r:ksu:s0`，且 `/system/bin/su` 出现 |
 | 开机约 30~55 秒后卡死并自动重启 | 本树有个私有的 `kshrinkd` 线程（上游 4.19 没有），它循环的第一次迭代传 `memcg = NULL`，而 `shrink_slab()` → `shrink_slab_memcg()` 会直接解引用这个 NULL → oops；设备上 `panic_on_oops=1`，于是立刻 panic 重启。已由 `patches/buildfix/0004-kshrinkd-null-memcg.patch` 修掉。判据：pstore 里出现 `Process kshrinkd0` + `pc : shrink_slab_memcg+0x80` + `NULL pointer dereference at ...007c` |
 | 设备配置与我编的对不上：`/proc/config.gz` 里 `KSU`/`CGROUP_*` 全是关的 | **本基座树把 `IKCONFIG` 的数据源硬编码成了厂家的完整 defconfig**（`kernel/Makefile` 里 `config_data.gz` 的依赖写死为 `arch/arm64/configs/vendor/sdm660-perf-full_defconfig`），所以 `/proc/config.gz` 报的是厂家那份配置，**与当前运行内核的真实配置无关**，不能用它做断言。要判断真实配置请看运行时能力（`/proc/cgroups`、`/proc/self/ns`、`/proc/filesystems`）或构建时的 `out/.config` |
 | 本地构建报「预检失败，补丁与源码树不匹配」 | 十有八九不是补丁的问题，而是容器里**缺 `patch` 命令**（旧版镜像就缺，缺命令被报成了补丁不匹配）。现在的镜像已补齐，且 `apply-patches.sh` 会打印补丁的真实错误 |
