@@ -1,0 +1,59 @@
+# 4.19 内核「非转译」本地编译环境：arm64 原生，在 OrbStack 里直接跑，不经 Rosetta。
+#
+# 和 docker/Dockerfile（amd64 + AOSP clang r416183b）的分工：
+#   - 那一份与 GitHub Actions 完全同构（同编译器、同架构），结论可直接外推；
+#     代价是要过 Rosetta 转译，实测约 2.25x 开销
+#   - 这一份是原生 arm64，用于快速迭代
+#
+# 工具链为什么是 LLVM 官方 12.0.1 而不是 AOSP 的 clang：
+#   AOSP 预编译 clang 只发布 linux-x86_64 版，arm64 宿主上执行会 exec format error。
+#   LLVM 12.0.1 的官方 aarch64 构建与 CI 用的 clang 12.0.5 (r416183b) 同代（差一个
+#   补丁号），是 arm64 上最接近 CI 的选择。apt 的 clang-14 作为备选一并装着，
+#   需要时用 CLANG_DIR=/usr 切过去对比。
+FROM --platform=linux/arm64 debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      bc bison flex libssl-dev libelf-dev lz4 xz-utils zip unzip \
+      ccache python3 git ca-certificates curl rsync make gcc \
+      patch cpio device-tree-compiler binutils-aarch64-linux-gnu \
+    && rm -rf /var/lib/apt/lists/*
+
+# 备选工具链：apt 的 clang-14（原生，秒装）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      clang lld llvm \
+    && rm -rf /var/lib/apt/lists/* \
+    && /usr/bin/clang-14 --version | head -1
+
+# 主力工具链：LLVM 12.0.1 官方 aarch64 构建（约 378MB）
+ARG LLVM_URL="https://github.com/llvm/llvm-project/releases/download/llvmorg-12.0.1/clang+llvm-12.0.1-aarch64-linux-gnu.tar.xz"
+RUN mkdir -p /opt/clang \
+    && curl -fL --retry 5 --retry-delay 5 "$LLVM_URL" -o /tmp/llvm.tar.xz \
+    && tar xf /tmp/llvm.tar.xz -C /opt/clang --strip-components=1 \
+    && rm -f /tmp/llvm.tar.xz \
+    && /opt/clang/bin/clang --version | head -1 \
+    && /opt/clang/bin/ld.lld --version | head -1
+
+# 与 amd64 镜像保持同样的约定：工具链在 /opt/clang。
+# 构建时传 TOOLCHAIN_DIR=/opt，setup-toolchain.sh 就会直接复用它、不再去下载
+# x86_64 版的 AOSP clang（那在 arm64 上根本跑不起来）。
+ENV PATH=/opt/clang/bin:$PATH
+ENV CLANG_DIR=/opt/clang
+
+ENV CCACHE_DIR=/ccache
+ENV CCACHE_MAXSIZE=10G
+ENV CCACHE_SLOPPINESS=file_stat_matches,time_macros,include_file_ctime
+
+ENV CC_CMD="ccache clang"
+
+WORKDIR /recipe
+SHELL ["/bin/bash", "-lc"]
+
+# 两个已踩到的坑，都在这一层里修掉（放在最后是为了不破坏上面那层 378MB 的下载缓存）：
+#  1) LLVM 12 的官方 aarch64 包链的是 ncurses5 的 libtinfo.so.5，bookworm 只有 6.x，
+#     不补 libtinfo5 的话 clang 直接 "error while loading shared libraries" 起不来；
+#  2) ENV PATH 在登录 shell 下会被 /etc/profile 重置（bash -lc 就是登录 shell），
+#     所以 /opt/clang 必须再挂一份 profile.d，否则 clang 会静默落到 apt 的 clang-14 上。
+RUN apt-get update && apt-get install -y --no-install-recommends libtinfo5 \
+    && rm -rf /var/lib/apt/lists/* \
+    && printf 'export PATH=/opt/clang/bin:$PATH\n' > /etc/profile.d/zz-clang.sh \
+    && bash -lc 'command -v clang; clang --version | head -1; ld.lld --version | head -1'

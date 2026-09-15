@@ -8,3 +8,7 @@ work/
 *.tar.gz
 toolchains/
 .ccache/
+
+# make-boot-img.sh 的解包工作目录（含原厂/新镜像的中间产物，曾被误提交）
+.makeboot/
+.makeboot-selftest/

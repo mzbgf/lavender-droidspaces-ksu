@@ -7,6 +7,7 @@
 source "$(dirname "$0")/lib.sh"
 
 require_dir "$KERNEL_DIR"
+require_cmd patch
 cd "$KERNEL_DIR"
 
 PATCHES_DIR="$REPO_ROOT/patches"
@@ -49,7 +50,9 @@ for row in "${TABLE[@]}"; do
   fi
 
   log "应用: $name"
-  if ! patch -p1 --forward --dry-run --silent <"$pfile" >/dev/null 2>&1; then
+  dr_out=""
+  if ! dr_out="$(patch -p1 --forward --dry-run <"$pfile" 2>&1)"; then
+    printf '%s\n' "$dr_out" | sed 's/^/    /' >&2
     die "预检失败，补丁与源码树不匹配: $rel"
   fi
   patch -p1 --forward --silent <"$pfile"

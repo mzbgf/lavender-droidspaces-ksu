@@ -12,10 +12,14 @@ if [ "$size" -lt $((6 * 1024 * 1024)) ] || [ "$size" -gt $((48 * 1024 * 1024)) ]
   die "镜像体积异常（期望 6-48 MiB）：$size 字节"
 fi
 
-# dtb 必须真的是 lavender 的（dts 里的 model / compatible 字符串在未压缩的 dtb 段里可直接 grep）
-LAV_MODEL="Qualcomm Technologies, Inc. SDM 660 PM660 + PM660L MTP F7A"
+# dtb 必须真的是 lavender 的（dts 里的 model / compatible 字符串在未压缩的 dtb 段里可直接 grep）。
+# 不同基座树对同一台机器的 model 串并不相同：
+#   pix106 树      -> … SDM 660 PM660 + PM660L MTP F7A
+#   San-Kernel 树  -> … SDM 660 PM660 + PM660L MTP, Lavender
+# 所以只断言到两者的公共前缀；要卡整串时用 LAV_MODEL 覆盖。
+LAV_MODEL="${LAV_MODEL:-Qualcomm Technologies, Inc. SDM 660 PM660 + PM660L MTP}"
 if ! grep -qa "$LAV_MODEL" "$IMG"; then
-  die "镜像里找不到 lavender 的 dtb（${LAV_MODEL}）——设备不会启动"
+  die "镜像里找不到 lavender 的 dtb（期望含「${LAV_MODEL}」）——设备不会启动"
 fi
 log "含 lavender dtb ✔  ($LAV_MODEL)"
 
@@ -48,8 +52,16 @@ grep -qF -- "-- ReSukiSU: using Manual Hook" "$OUT_DIR/build.log" \
 grep -qE -- "-- ReSukiSU version code: [0-9]+" "$OUT_DIR/build.log" \
   || die "构建日志里没有 reSukiSU 版本号：驱动可能没接进构建"
 ksu_objs="$(grep -cE 'CC +drivers/kernelsu/' "$OUT_DIR/build.log" || true)"
-[ "${ksu_objs:-0}" -gt 0 ] || die "构建日志里没有编译任何 drivers/kernelsu/*.o"
-log "reSukiSU 已编入内核：${ksu_objs} 个目标文件，hook 方式 = manual"
+cc_total="$(grep -cE '^  CC ' "$OUT_DIR/build.log" || true)"
+if [ "${ksu_objs:-0}" -gt 0 ]; then
+  log "reSukiSU 已编入内核：${ksu_objs} 个目标文件，hook 方式 = manual"
+elif [ "${cc_total:-0}" -eq 0 ]; then
+  # 增量构建（源码没变，make 无事可做）时日志里不会有任何 CC 行，
+  # 此时改由下面的 vmlinux / Image 版本串断言来证明 reSukiSU 确实在里面。
+  warn "本次是增量构建（日志里没有 CC 行），KSU 改用镜像内的版本串来断言"
+else
+  die "构建日志里编译了 ${cc_total} 个目标文件，但没有一个 drivers/kernelsu/*.o"
+fi
 
 if [ -f "$OUT_DIR/vmlinux" ]; then
   if grep -qa "@ReSukiSU" "$OUT_DIR/vmlinux" || { [ -f "$BOOT/Image" ] && grep -qa "@ReSukiSU" "$BOOT/Image"; }; then

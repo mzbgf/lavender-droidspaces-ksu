@@ -4,9 +4,20 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# 上游内核源码固定点（main == refs/heads/0.19.4 == b2ee0c8）
-KERNEL_REPO="${KERNEL_REPO:-https://github.com/pix106/android_kernel_xiaomi_sdm660_southwest-ng}"
-KERNEL_PIN="${KERNEL_PIN:-b2ee0c8f4cd75fbb2097b9bcd8dc3306166f241c}"
+# 上游内核源码固定点（San-Kernel / user-why-red，back 分支的 commit）。
+#
+# 为什么是这棵树、而不是 pix106 的 SouthWest-NG：两者在 mmc 驱动、sdhci、DT 的
+# sdhci 节点上几乎逐字相同，但 pix106 0.19.4 在本机（Redmi Note 7 + AOSP 16）
+# 实测必定在开机约 8 秒时于 mmc devfreq 路径 Oops（野指针 + Fatal exception in
+# interrupt）；而本树用完全相同的工具链与打包流程，真机 fastboot boot 一次成功。
+KERNEL_REPO="${KERNEL_REPO:-https://github.com/user-why-red/android_kernel_xiaomi_sdm660_419}"
+KERNEL_PIN="${KERNEL_PIN:-6d41c71e301a3c3394167dc5ef03cbc846ae6772}"
+
+# 基座 defconfig，必须与上面那棵树对应（两处必须一起改，否则会合错配置）：
+#   pix106/SouthWest-NG -> vendor/xiaomi/sdm660_defconfig + vendor/xiaomi/lavender.config
+#   San-Kernel          -> vendor/lavender-perf_defconfig（设备专属，一份就够）
+KERNEL_BASE_DEFCONFIG="${KERNEL_BASE_DEFCONFIG:-arch/arm64/configs/vendor/lavender-perf_defconfig}"
+
 KERNEL_DIR="${KERNEL_DIR:-$REPO_ROOT/kernel}"
 OUT_DIR="${OUT_DIR:-$KERNEL_DIR/out}"
 
@@ -30,6 +41,14 @@ die()  { printf '\033[1;31m[x]\033[0m %s\n' "$*" >&2; exit 1; }
 
 require_dir()  { [ -d "$1" ] || die "目录不存在: $1"; }
 require_file() { [ -f "$1" ] || die "文件不存在: $1"; }
+
+# 缺命令时要报「缺命令」，不能让它伪装成别的失败（曾经把缺 patch 报成「补丁不匹配」）
+require_cmd() {
+  local c
+  for c in "$@"; do
+    command -v "$c" >/dev/null 2>&1 || die "缺少命令: ${c}（请先安装，容器镜像见 docker/Dockerfile）"
+  done
+}
 
 # 把仓库里的 config 片段拷进内核树（merge_config.sh 需要树内路径）
 install_fragments() {

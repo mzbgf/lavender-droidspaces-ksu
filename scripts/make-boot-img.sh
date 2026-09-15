@@ -172,7 +172,7 @@ CHK_K_PAYLOAD="$(payload_sha "$VER/kernel")"
 [ "$CHK_K_PAYLOAD" != "$STOCK_K_PAYLOAD" ] || die "校验失败：新镜像里的内核还是原厂那个，没换成功"
 
 if has_dtb "$STAGE/kernel"; then
-  if grep -qa "PM660L MTP F7A" "$VER/kernel" 2>/dev/null || grep -qa "PM660L MTP F7A" "$VER/kernel_dtb" 2>/dev/null; then
+  if grep -qa "PM660L MTP" "$VER/kernel" 2>/dev/null || grep -qa "PM660L MTP" "$VER/kernel_dtb" 2>/dev/null; then
     log "新镜像里含 lavender dtb ✔"
   else
     warn "新镜像里没搜到 lavender dtb 串（换了机型请忽略）"

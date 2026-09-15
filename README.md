@@ -34,19 +34,56 @@ lavender 出厂内核是 4.4，但 **Android 16 在 lavender 上没有 4.4 生�
 
 | 项 | 值 |
 |---|---|
-| 仓库 | `pix106/android_kernel_xiaomi_sdm660_southwest-ng` |
-| 分支 | `main`（与 `refs/heads/0.19.4` 同一提交） |
-| 固定 commit | `b2ee0c8f4cd75fbb2097b9bcd8dc3306166f241c` |
-| 内核版本 | 4.19.325，`CONFIG_LOCALVERSION="-SouthWest-NG-0.19.4"` |
-| 为什么是它 | 它就是 lavender 的 A16 ROM 实际使用的内核线；ROM 设备树声明的 `vendor/xiaomi/sdm660_defconfig` + `vendor/xiaomi/lavender.config` + `Image.gz-dtb` 与本仓库布局逐项吻合；全树没有任何 KernelSU/SUSFS 代码，基座干净 |
+| 仓库 | `user-why-red/android_kernel_xiaomi_sdm660_419`（San-Kernel，GPL） |
+| 分支 | `back`（该仓默认分支） |
+| 固定 commit | `6d41c71e301a3c3394167dc5ef03cbc846ae6772` |
+| 内核版本 | 4.19.325，`CONFIG_LOCALVERSION="-San-Kernel-Aegis-R1.1.108"` |
+| 基座 defconfig | `arch/arm64/configs/vendor/lavender-perf_defconfig`（设备专属） |
+| 为什么是它 | **它是本机真机实测唯一能开机的那条源码线** —— 见下一节 |
 
-**版本串（`uname -r`）**：树根本身带 `localversion-cip`（`-cip135`）与
-`localversion-st`（`-st19`）两个文件，kbuild 会把它们接在 `CONFIG_LOCALVERSION`
-之前，所以本配方构建出的版本串是：
+### 为什么换掉了 pix106/SouthWest-NG（根因记录）
+
+最初用的是 `pix106/android_kernel_xiaomi_sdm660_southwest-ng` @ `b2ee0c8`（0.19.4），
+理由是「版本串与 ROM 一致」。但那个内核在真机上**必定**在开机约 8 秒时崩：
 
 ```
-4.19.325-cip135-st19-SouthWest-NG-0.19.4
+Internal error: Oops: 96000005 [#1] PREEMPT SMP
+Process kworker/u17:0        Workqueue: devfreq_wq devfreq_monitor
+pc : try_to_wake_up+0x504/0xafc     lr : default_wake_function+0x14/0x1c
+Call trace（中断侧）:
+  complete <- mmc_wait_done <- mmc_request_done <- sdhci_request_done <- sdhci_tasklet_finish
+而同一个工作线程当时正停在（任务侧）:
+  mmc_clk_update_freq <- mmc_devfreq_set_target <- update_devfreq <- devfreq_monitor
+Kernel panic - not syncing: Fatal exception in interrupt
 ```
+
+逐个假设都用真机实验打掉了：
+
+| 假设 | 结论 | 依据 |
+|---|---|---|
+| 重打包流程有问题 | ✗ 排除 | `fastboot --cmdline` 注入标记，镜像起来后 `/proc/cmdline` 带标记，确认跑的就是我们这份 |
+| 打包时混入多机型 dtb | ✗ 排除 | 单 lavender dtb 的版本照样崩 |
+| dtb 来源不对 | ✗ 排除 | 两棵树的 `sdhci@c0c4000` 节点逐属性一致，`qcom,devfreq,freq-table` 两边都有 |
+| reSukiSU 引入 | ✗ 排除 | 关掉 KSU 的构建照样崩 |
+| `FAIR_GROUP_SCHED` / `DEVFREQ_BOOST` | ✗ 排除 | 各自单独关掉后仍崩 |
+| **基座源码线** | ✅ **根因** | 换成本仓库这棵树后，**同一套工具链（clang 12.0.5）、同一套打包流程**，`fastboot boot` 一次成功 |
+
+关键对照数据：两棵树的 mmc 代码几乎逐字相同（`drivers/mmc/core/core.c` 差 47 行且全是
+SD-Express/日志噪音，`sdhci-msm.c` 差 20 行全是 `pr_info` 格式与返回值检查，
+`sdhci.c` 差 7 行，`completion.c`/`host.c`/`queue.c` 零差异）。真正有差异的是
+`sched/core.c`（886 行）、`rcu/tree_plugin.h`（2609 行）以及 1115 条配置项。
+所以崩在 mmc devfreq 只是「内存先被弄坏、这里第一个撞上」，不必继续往下猜 ——
+能开机的那棵树就是依据。
+
+**版本串（`uname -r`）**：树根带 `localversion-st`（`-st20`），kbuild 会把它接在
+`CONFIG_LOCALVERSION` 之前，所以本配方构建出的版本串是：
+
+```
+4.19.325-st20-San-Kernel-Aegis-R1.1.108
+```
+
+（设备上那个已刷入的 San-Kernel 是 `-st19-`，因为它来自该仓更早的一次发布构建；
+本配方固定在 `back` 分支 2026-09-14 的 commit 上。）
 
 **这个版本串对刷机是硬要求吗？不是。** 本树 defconfig（以及本配方产出的 `.config`）
 里 `MODULES` 是关闭的——内核**完全没有模块支持**，因此没有任何东西会去校验版本串：
@@ -106,23 +143,38 @@ bash scripts/build-local.sh    # 拉源码（按固定 commit）→ 装工具链
 
 ## 构建状态：已验证 / 未验证
 
-**已验证（云端构建全绿，产物下载后逐项复核过）**
+**已验证（本地产物 + 真机 `fastboot boot`，逐项有证据）**
 
-- 内核编译通过，产物 `Image.gz-dtb` 18.4 MiB；
-- 从产物里解出的内核 banner 就是最终 `uname -r`：
-  `Linux version 4.19.325-cip135-st19-SouthWest-NG-0.19.4 (droidspaces@lavender)`；
-- 镜像里含 lavender 的 dtb：`Qualcomm Technologies, Inc. SDM 660 PM660 + PM660L MTP F7A`；
+内核侧（构建产物中直接核验）：
+
+- 内核编译通过，`Image.gz-dtb` 12.8 MiB，产物 `uname -r` 为
+  `4.19.325-st20-San-Kernel-Aegis-R1.1.108`；
+- 镜像里含 lavender 的 dtb（型号串 `… SDM 660 PM660 + PM660L MTP, Lavender`，1 个 dtb）；
 - reSukiSU 确实编入内核：34 个 `drivers/kernelsu/*.o`、构建日志 `using Manual Hook`、
-  内核侧版本号 35144、版本名 `v4.2.0-rc2-3576e6a5@ReSukiSU`；
+  内核侧版本号 35144、镜像里能搜到 `@ReSukiSU` 版本串；
 - `CONFIG_KSU_SUSFS` 未启用，构建日志里没有任何 susfs 的编译；
-- Droidspaces 核心项（24 项）、网络隔离项（24 项）、KernelSU 项与开机关键项
-  全部在 `check-configs.sh` 里逐项断言通过，任一失败即构建失败。
+- Droidspaces 核心项、网络隔离项、KernelSU 项、开机关键项全部由 `check-configs.sh`
+  逐项断言，任一失败即构建失败。
+
+真机侧（`fastboot boot` 临时启动，`scripts/verify-on-device.sh` 自动检查，15 项全过）：
+
+- `uname -r` 与产物一致；`/proc/cmdline` 带本次注入的临时标记，确认跑的就是这份镜像；
+- **Droidspaces 依赖的运行时能力全部就绪**：cgroup 控制器 `devices`/`pids`/`memory`/
+  `freezer`/`net_prio` 都在 `/proc/cgroups` 里；`overlay` 文件系统可用；
+  `ipc`/`mnt`/`net`/`pid`/`user`/`uts` 六个 namespace 都在 `/proc/self/ns` 里；
+- 网络接口已就绪，`boot` 分区节点可读（回滚用）。
+
+作为对照：设备上原先那个内核（San-Kernel 官方发布版）**没有** `CONFIG_KSU`，
+`cgroup devices/pids/net_prio` 与 `ipc/pid/user/uts` namespace 也都不可见 ——
+也就是说它跑不了 Droidspaces、也不带 root。本配方的产物把这两块都补上了。
 
 **未验证（需要你在真机上确认）**
 
-- 刷入后能否正常开机、wlan/蓝牙/信号是否正常；
-- reSukiSU 管理器能否正常授权（`su -c id` 返回 uid=0）；
-- Droidspaces 的 Requirements Check 是否全绿、发行版容器能否真正起来。
+- 刷入后能否长期稳定运行（目前只做了 `fastboot boot` 的临时启动验证，**没有实际写入 boot 分区**）；
+- wlan / 蓝牙 / 移动信号是否正常；
+- 装 reSukiSU 管理器后 `su -c id` 是否返回 uid=0；
+- Droidspaces 应用内的 Requirements Check 是否全绿、发行版容器能否真正起来；
+- 触摸、通话、相机等日常功能。
 
 刷机前请务必读完下一节的备份与回滚步骤。
 
@@ -217,10 +269,15 @@ su -c 'droidspaces check'         # 等价于 App 里的 Requirements Check
 | 现象 | 排查方向 |
 |---|---|
 | 刷完卡开机 logo | ramdisk 解压配置：确认产物 `.config` 里 `CONFIG_RD_LZ4=y` |
-| 刷完能开机但 wlan/蓝牙坏 | 先确认 ROM 是否带 `.ko`（`su -c 'ls /vendor/lib/modules'`）。若带，多半是内核与那些 `.ko` 的版本串/配置不一致：比对 `uname -r`，必要时换 `KERNEL_PIN` 到对应 `0.x.x` 分支。若不带（本机型 A16 ROM 的常态），去查驱动内置项是否被改动 |
+| 刷完能开机但 wlan/蓝牙坏 | 先确认 ROM 是否带 `.ko`（`su -c 'ls /vendor/lib/modules'`）。若带，多半是内核与那些 `.ko` 的版本串/配置不一致：比对 `uname -r`，必要时换 `KERNEL_PIN`。若不带（本机型 A16 ROM 的常态），去查驱动内置项是否被改动 |
 | 开机极慢 / lmkd 报错 | 确认 `CONFIG_PSI=y`（脚本已断言） |
 | `droidspaces check` 有红叉 | 看 CI 里 `check-configs.sh` 的输出；容器网络不通多半是 NAT 相关项缺失 |
 | 进不去 root / KSU safe mode | 本树 `CONFIG_KPROBES` 已关闭；若仍进 safe mode，检查 hook 是否被上游改动影响 |
+| 刷完屏幕只剩背光、一直卡着 | 本基座 defconfig 里 `PANIC_ON_OOPS` 是开的、`PANIC_TIMEOUT` 是 `-1`：任何 oops 都会立刻 panic 且永不自动重启。已由 `configs/30-boot-compat.config` 改成「oops 只杀任务 + panic 后 5 秒重启」。真正的 panic 日志去 recovery 里读 `/sys/fs/pstore/console-ramoops-0` |
+| 设备配置与我编的对不上：`/proc/config.gz` 里 `KSU`/`CGROUP_*` 全是关的 | **本基座树把 `IKCONFIG` 的数据源硬编码成了厂家的完整 defconfig**（`kernel/Makefile` 里 `config_data.gz` 的依赖写死为 `arch/arm64/configs/vendor/sdm660-perf-full_defconfig`），所以 `/proc/config.gz` 报的是厂家那份配置，**与当前运行内核的真实配置无关**，不能用它做断言。要判断真实配置请看运行时能力（`/proc/cgroups`、`/proc/self/ns`、`/proc/filesystems`）或构建时的 `out/.config` |
+| 本地构建报「预检失败，补丁与源码树不匹配」 | 十有八九不是补丁的问题，而是容器里**缺 `patch` 命令**（旧版镜像就缺，缺命令被报成了补丁不匹配）。现在的镜像已补齐，且 `apply-patches.sh` 会打印补丁的真实错误 |
+| 构建日志里出现 `Error in reading or end of file.` | 这不是编译错误：是 `make oldconfig` 遇到新符号去交互提问、读到 EOF。构建照常继续，产物正常 |
+| 本地改了 `Dockerfile` 却不生效 | 旧版包装脚本「镜像已存在就跳过构建」。现在每次都过一遍 `docker build`（全缓存命中约 1 秒），改了就会生效 |
 
 ## 目录结构
 
@@ -230,11 +287,48 @@ configs/                      内核配置片段（按顺序合并，后者覆�
   00-rom-align.config         与目标 ROM stock config 的对齐（默认空）
   10-droidspaces.config       Droidspaces 非 GKI 必选+推荐（4.19 符号名已校正）
   20-resukisu.config          CONFIG_KSU + manual hook，SUSFS 关闭
-  30-boot-compat.config       开机关键项钉住（RD_LZ4/PSI/VENDOR_HOOKS/MODULES/KPROBES）
+  30-boot-compat.config       开机关键项钉住（RD_LZ4/PSI/VENDOR_HOOKS/MODULES/KPROBES/panic 行为）
 patches/                      全部补丁（来源与必要性见 patches/README.md）
 scripts/                      构建脚本（CI 与本地共用同一套）
+  build.sh                    完整构建流程（CI 与本地都走它）
+  check-configs.sh            配置逐项断言（任一失败即构建失败）
+  make-boot-img.sh            用 magiskboot 把产物重打包成可 fastboot boot 的 boot.img
+  verify-artifacts.sh         产物侧断言（dtb / KSU / 版本串）
+  verify-on-device.sh         真机侧验证（标记 / KSU 线索 / Droidspaces 运行时能力）
+  local-docker-build.sh       本地容器构建入口（两种环境见下）
+docker/
+  Dockerfile                  amd64 + AOSP clang r416183b（与 CI 同构，走 Rosetta）
+  Dockerfile.native           arm64 原生 + LLVM 12.0.1（非转译路线，快）
 anykernel/anykernel.sh        适配 lavender 的 AnyKernel3 脚本模板
 ```
+
+## 本地构建：两种容器环境
+
+CI 之外想要本地快速迭代时，用「固定镜像 + 三个 volume」搭一次环境，之后长期复用：
+
+```sh
+# 路线 A：与 CI 完全同构（amd64 + AOSP clang r416183b），结论可直接外推
+bash scripts/local-docker-build.sh
+
+# 路线 B：非转译的原生 arm64（LLVM 12.0.1），用于快速迭代
+IMAGE=lavender-builder-native:4.19 PLATFORM=linux/arm64 \
+DOCKERFILE=$PWD/docker/Dockerfile.native TOOLCHAIN_DIR=/opt \
+SRC_VOL=lavender-san-src OUT_VOL=lavender-san-out-native JOBS=10 \
+bash scripts/local-docker-build.sh
+```
+
+两边的量级差别（同一棵树、同一台机器、全量冷构建）：
+
+| 路线 | 工具链 | 全量构建 |
+|---|---|---|
+| A：amd64 + Rosetta | AOSP clang 12.0.5 | **17 分 42 秒**（8 job） |
+| B：arm64 原生 | LLVM 12.0.1 | **4 分 18 秒**（10 job） |
+
+同一棵树、同一台机器、都是冷 ccache 的全量构建，B 比 A 快约 **4.1 倍** —— 上面
+「Rosetta 大约慢 30%」的旧估计是错的：对 clang 这种大体积、翻译缓存不友好的程序，
+Rosetta 的代价远不止 30%。所以日常改代码迭代走 B，出正式包走 A/CI（与 CI 同构）。
+
+注意：两种环境的产物目录必须分开（`OUT_VOL` 不同），否则 amd64 的 `.o` 会串进 arm64 的链接。
 
 ## 改配置时的一条硬约束（踩过的坑）
 

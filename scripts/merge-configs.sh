@@ -46,9 +46,10 @@ lint_fragments() {
 }
 lint_fragments
 
+# 基座 defconfig 由 lib.sh 的 KERNEL_BASE_DEFCONFIG 给出（与 KERNEL_REPO/PIN 那棵树
+# 一一对应；换树时必须一起改，否则会把配置合到另一棵树的 defconfig 上）
 BASE=(
-  arch/arm64/configs/vendor/xiaomi/sdm660_defconfig
-  arch/arm64/configs/vendor/xiaomi/lavender.config
+  "$KERNEL_BASE_DEFCONFIG"
 )
 FRAGS=(
   arch/arm64/configs/vendor/local/00-rom-align.config

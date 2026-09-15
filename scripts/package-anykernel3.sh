@@ -8,7 +8,9 @@ BOOT="$OUT_DIR/arch/arm64/boot"
 IMG="$BOOT/Image.gz-dtb"
 GZ="$BOOT/Image.gz"
 DTB="$BOOT/dts/vendor/qcom/sdm660-mtp-lavender.dtb"
-LAV_MODEL="Qualcomm Technologies, Inc. SDM 660 PM660 + PM660L MTP F7A"
+# dtb 型号串：不同基座树对同一台机器的 model 不完全一样（pix106 树是「…MTP F7A」，
+# San-Kernel 树是「…MTP, Lavender」），这里只认公共前缀；要卡整串时用 LAV_MODEL 覆盖。
+LAV_MODEL="${LAV_MODEL:-Qualcomm Technologies, Inc. SDM 660 PM660 + PM660L MTP}"
 
 # 1) 准备内核镜像：优先用内核自建的 Image.gz-dtb；若其中没有 dtb（该树的
 #    DTB_OBJS 用 parse-time find 计算，首次构建可能拿到空列表），则手工拼接。
@@ -61,8 +63,21 @@ rm -f "$ZIP"
 )
 
 # 5) 校验 zip 结构
-for want in anykernel.sh tools/magiskboot tools/ak3-core.sh Image.gz-dtb META-INF/com/google/android/update-binary; do
-  unzip -l "$ZIP" | grep -q "$want" || die "zip 里缺少 $want"
+# 产物 zip 直接写在 bind mount（macOS 侧）上时，容器紧接着把它读回来偶尔会读不到
+# （virtiofs 可见性延迟，表现为「zip 里缺少 anykernel.sh」这种假阴性），所以带重试。
+verify_zip() {
+  local want
+  for want in anykernel.sh tools/magiskboot tools/ak3-core.sh Image.gz-dtb META-INF/com/google/android/update-binary; do
+    unzip -l "$ZIP" 2>/dev/null | grep -q "$want" || return 1
+  done
+  return 0
+}
+zip_ok=""
+for i in 1 2 3 4 5; do
+  if verify_zip; then zip_ok=1; break; fi
+  warn "第 ${i} 次校验 zip 结构未通过（bind mount 可见性延迟？）"
+  sleep 1
 done
+[ -n "$zip_ok" ] || die "zip 结构校验失败（已重试 5 次）"
 log "刷机包: $ZIP ($(( $(wc -c <"$ZIP") / 1024 / 1024 )) MiB)"
 unzip -l "$ZIP" | sed 's/^/    /'
