@@ -38,25 +38,30 @@ if [ -f "$OUT_DIR/build.log" ] && grep -q "susfs" "$OUT_DIR/build.log"; then
   die "构建日志里出现了 susfs（要求完全不编译 SUSFS）"
 fi
 
-# KSU 必须真的编进了内核。这里刻意**不用 nm 查符号**：本树开着 LTO + CFI，
-# 局部符号会被内联/内部化而消失（CI 第一次就是这样误报的）。改为查两条硬证据：
+# KSU 检查：仅当本产物启用了 KSU 时才断言（诊断构建会显式关掉 KSU）。
+# 刻意**不用 nm 查符号**：本树开着 LTO + CFI，局部符号会被内联/内部化而消失
+# （CI 第一次就是这样误报的）。改为查两条硬证据：
 #   1) 构建日志里 reSukiSU 明确走了 manual hook，且算出了版本号；
 #   2) vmlinux 里能搜到 KSU 的版本串（KSU_VERSION_FULL 里带 @ReSukiSU）。
-require_file "$OUT_DIR/build.log"
-grep -qF -- "-- ReSukiSU: using Manual Hook" "$OUT_DIR/build.log" \
-  || die "构建日志里没有 'using Manual Hook'：hook 方式不对（4.19 非 GKI 必须 manual hook）"
-grep -qE -- "-- ReSukiSU version code: [0-9]+" "$OUT_DIR/build.log" \
-  || die "构建日志里没有 reSukiSU 版本号：驱动可能没接进构建"
-ksu_objs="$(grep -cE 'CC +drivers/kernelsu/' "$OUT_DIR/build.log" || true)"
-[ "${ksu_objs:-0}" -gt 0 ] || die "构建日志里没有编译任何 drivers/kernelsu/*.o"
-log "reSukiSU 已编入内核：${ksu_objs} 个目标文件，hook 方式 = manual"
+if grep -q '^CONFIG_KSU=y' "$OUT_DIR/.config"; then
+  require_file "$OUT_DIR/build.log"
+  grep -qF -- "-- ReSukiSU: using Manual Hook" "$OUT_DIR/build.log" \
+    || die "构建日志里没有 'using Manual Hook'：hook 方式不对（4.19 非 GKI 必须 manual hook）"
+  grep -qE -- "-- ReSukiSU version code: [0-9]+" "$OUT_DIR/build.log" \
+    || die "构建日志里没有 reSukiSU 版本号：驱动可能没接进构建"
+  ksu_objs="$(grep -cE 'CC +drivers/kernelsu/' "$OUT_DIR/build.log" || true)"
+  [ "${ksu_objs:-0}" -gt 0 ] || die "构建日志里没有编译任何 drivers/kernelsu/*.o"
+  log "reSukiSU 已编入内核：${ksu_objs} 个目标文件，hook 方式 = manual"
 
-if [ -f "$OUT_DIR/vmlinux" ]; then
-  if grep -qa "@ReSukiSU" "$OUT_DIR/vmlinux" || { [ -f "$BOOT/Image" ] && grep -qa "@ReSukiSU" "$BOOT/Image"; }; then
-    log "内核镜像含 reSukiSU 版本串 ✔"
-  else
-    die "vmlinux / Image 里搜不到 reSukiSU 版本串"
+  if [ -f "$OUT_DIR/vmlinux" ]; then
+    if grep -qa "@ReSukiSU" "$OUT_DIR/vmlinux" || { [ -f "$BOOT/Image" ] && grep -qa "@ReSukiSU" "$BOOT/Image"; }; then
+      log "内核镜像含 reSukiSU 版本串 ✔"
+    else
+      die "vmlinux / Image 里搜不到 reSukiSU 版本串"
+    fi
   fi
+else
+  log "本次产物未启用 KSU（诊断构建）：跳过 KSU 断言"
 fi
 
 # 版本串（模块 vermagic 的依据，也是 uname -r 会显示的值）

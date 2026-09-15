@@ -155,6 +155,22 @@ log "repack"
 mb "$STAGE" repack stock.img new-boot.img >"$WORKDIR/repack.log" 2>&1 || die "magiskboot 重打包失败，见 ${WORKDIR}/repack.log"
 require_file "$STAGE/new-boot.img"
 cp -f "$STAGE/new-boot.img" "$OUTPUT"
+
+# magiskboot 会按「原镜像大小」保留尾部数据，而我们是从分区 dd 出来的（64 MiB），
+# 于是产物里带着几十 MB 无意义填充。fastboot boot 只需要真正的镜像部分，裁掉它。
+read_u32() { od -An -tu4 -j "$2" -N4 "$1" | tr -d ' \n'; }
+align_up() { echo $(( ($1 + $2 - 1) / $2 * $2 )); }
+_page="$(read_u32 "$OUTPUT" 36)"
+_ksz="$(read_u32 "$OUTPUT" 8)"
+_rsz="$(read_u32 "$OUTPUT" 16)"
+_ssz="$(read_u32 "$OUTPUT" 24)"
+_exact=$(( _page + $(align_up "$_ksz" "$_page") + $(align_up "$_rsz" "$_page") + $(align_up "$_ssz" "$_page") ))
+_cur="$(wc -c <"$OUTPUT" | tr -d ' ')"
+if [ "$_exact" -lt "$_cur" ]; then
+  head -c "$_exact" "$OUTPUT" >"$OUTPUT.trim" && mv -f "$OUTPUT.trim" "$OUTPUT"
+  log "裁掉尾部填充：${_cur} → ${_exact} 字节"
+fi
+
 OUT_SIZE="$(wc -c <"$OUTPUT" | tr -d ' ')"
 log "写出 ${OUTPUT}（${OUT_SIZE} 字节）"
 

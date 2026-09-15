@@ -62,17 +62,21 @@ for e in VETH BRIDGE NETFILTER BRIDGE_NETFILTER NETFILTER_ADVANCED NF_CONNTRACK 
   check_y "$e"
 done
 
-echo "=== [3/4] KernelSU / reSukiSU（必须 manual hook，且不得启用 SUSFS） ==="
-check_y KSU
-check_y KSU_MANUAL_HOOK
-if grep -qE '^CONFIG_KSU_SUSFS=y' "$CFG"; then
-  fail "CONFIG_KSU_SUSFS=y（要求不使用 SUSFS）"
+echo "=== [3/4] KernelSU / reSukiSU（若启用则必须 manual hook，且不得启用 SUSFS） ==="
+if grep -q '^CONFIG_KSU=y' "$CFG"; then
+  check_y KSU
+  check_y KSU_MANUAL_HOOK
+  if grep -qE '^CONFIG_KSU_SUSFS=y' "$CFG"; then
+    fail "CONFIG_KSU_SUSFS=y（要求不使用 SUSFS）"
+  else
+    pass "CONFIG_KSU_SUSFS 未启用"
+  fi
+  for s in KSU_MANUAL_HOOK_AUTO_SETUID_HOOK KSU_MANUAL_HOOK_AUTO_INITRC_HOOK KSU_MANUAL_HOOK_AUTO_INPUT_HOOK; do
+    if ! isset "$s"; then warn_ "$s 未出现（若该版本无此选项可忽略）"; fi
+  done
 else
-  pass "CONFIG_KSU_SUSFS 未启用"
+  warn_ "本次未启用 KSU（诊断构建）：跳过 KSU 相关断言"
 fi
-for s in KSU_MANUAL_HOOK_AUTO_SETUID_HOOK KSU_MANUAL_HOOK_AUTO_INITRC_HOOK KSU_MANUAL_HOOK_AUTO_INPUT_HOOK; do
-  if ! isset "$s"; then warn_ "$s 未出现（若该版本无此选项可忽略）"; fi
-done
 
 echo "=== [4/4] 开机关键项（必须与目标 ROM 的 stock 内核一致，不得漂移） ==="
 for e in RD_LZ4 PSI ANDROID_VENDOR_HOOKS; do check_y "$e"; done
