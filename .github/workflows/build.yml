@@ -15,9 +15,10 @@ permissions:
   contents: write
 
 env:
-  KERNEL_REPO: https://github.com/pix106/android_kernel_xiaomi_sdm660_southwest-ng
-  # main == refs/heads/0.19.4 == 这个 commit；换 ROM 版本时改这里
-  KERNEL_PIN: b2ee0c8f4cd75fbb2097b9bcd8dc3306166f241c
+  # [诊断分支 diag/sankernel-tree] 换成 San-Kernel 那棵树（你现役能启动的内核来源），
+  # 用来区分「基座源码线在这台 ROM 上跑不起来」还是「我们的编译环境有问题」
+  KERNEL_REPO: https://github.com/user-why-red/android_kernel_xiaomi_sdm660_419
+  KERNEL_PIN: 6d41c71e301a3c3394167dc5ef03cbc846ae6772
   RESUKISU_TAG: v4.2.0-rc2
   KERNEL_DIR: ${{ github.workspace }}/kernel
   CCACHE_MAXSIZE: 2G

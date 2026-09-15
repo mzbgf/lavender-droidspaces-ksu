@@ -47,8 +47,7 @@ lint_fragments() {
 lint_fragments
 
 BASE=(
-  arch/arm64/configs/vendor/xiaomi/sdm660_defconfig
-  arch/arm64/configs/vendor/xiaomi/lavender.config
+  arch/arm64/configs/vendor/lavender-perf_defconfig
 )
 FRAGS=(
   arch/arm64/configs/vendor/local/00-rom-align.config

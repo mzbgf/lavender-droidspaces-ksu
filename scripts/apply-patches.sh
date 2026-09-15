@@ -15,11 +15,7 @@ PATCHES_DIR="$REPO_ROOT/patches"
 #   条件 always   = 总是应用
 #   条件 openssl3 = 仅当构建机的 openssl 需要它时应用（拿不到 <openssl/engine.h>）
 TABLE=(
-  "buildfix/0001-cgroup-noprefix-compat-links.patch|kernel/cgroup/cgroup.c|kernfs_create_link\(cgrp->kn, name, kn\)|Droidspaces: cgroup noprefix 前缀别名|always"
   "buildfix/0002-write-once-expression.patch|include/linux/compiler.h|typeof\(x\) __val = \(val\);|构建修正: WRITE_ONCE 恢复表达式语义|always"
-  "buildfix/0003-extract-cert-openssl3-compat.patch|scripts/extract-cert.c|OPENSSL_VERSION_NUMBER >= 0x30000000L|构建修正: extract-cert 适配 OpenSSL 3|openssl3"
-  "resukisu/0001-manual-hooks.patch|fs/stat.c|ksu_handle_stat|reSukiSU: manual hook（stat/exec/faccessat/reboot）|always"
-  "resukisu/0002-selinux-symbol-exports.patch|security/selinux/selinuxfs.c|^ssize_t \(\*const write_op\[\]\)|reSukiSU: SELinux 静态符号导出|always"
 )
 
 # 构建机上 <openssl/engine.h> 是否可用（OpenSSL >= 3.5 已移除该头文件）
