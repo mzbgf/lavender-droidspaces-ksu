@@ -35,6 +35,7 @@ MAKE_ARGS=(
 # 需要 ccache 时传 CC_CMD="ccache clang"
 [ -n "${CC_CMD:-}" ] && MAKE_ARGS+=(CC="$CC_CMD")
 
+bash "$REPO_ROOT/scripts/lint-scripts.sh"
 bash "$REPO_ROOT/scripts/setup-resukisu.sh"
 bash "$REPO_ROOT/scripts/apply-patches.sh"
 bash "$REPO_ROOT/scripts/merge-configs.sh"

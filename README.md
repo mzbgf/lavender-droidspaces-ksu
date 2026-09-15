@@ -128,6 +128,52 @@ bash scripts/build-local.sh    # 拉源码（按固定 commit）→ 装工具链
 
 ---
 
+## 先临时验证：`fastboot boot`（不写分区）
+
+想先确认内核能不能起来、又不想动 boot 分区，可以做成一个 boot.img 直接 `fastboot boot`：
+镜像只加载进内存启动一次，重启就回到原内核。
+
+**第 1 步：拿到 ROM 原厂的 boot.img**（ramdisk 必须用 ROM 自己那份）
+
+```sh
+# 从 ROM 安装包里取
+unzip -o <ROM>-lavender-*.zip boot.img -d /tmp/rom/
+
+# 或者从设备上拉（recovery 里执行，再 adb pull）
+dd if=/dev/block/bootdevice/by-name/boot of=/sdcard/stock-boot.img
+```
+
+如果你这台机器现在刷的已经是第三方内核，dd 出来的是那份内核 + 同一份 ramdisk，
+拿来做验证也没问题。
+
+**第 2 步：重打包**（用 magiskboot —— 就是 AnyKernel3 在设备端用的那个工具；
+macOS 上脚本会自动用 OrbStack/Docker 跑 Linux 版 magiskboot，arm64 原生速度）
+
+```sh
+bash scripts/make-boot-img.sh --stock stock-boot.img \
+     --kernel AnyKernel3-lavender-*.zip -o new-boot.img
+```
+
+脚本会自校验：新镜像里的 ramdisk 与原厂**逐字节一致**、kernel 确实换成了我们的产物，
+并把原厂的 `HEADER_VER` / `PAGESIZE` / `CMDLINE` 打印出来。想验证工具的打包逻辑本身，
+可以跑 `bash scripts/tests/selftest-boot-img.sh`（造一个合成原厂镜像走完整流程，CI 里也会跑）。
+
+**第 3 步：临时启动**
+
+```sh
+adb reboot bootloader
+fastboot boot new-boot.img
+```
+
+起来后按下一节的「刷完怎么验」自检；确认没问题再刷 AnyKernel3 包落盘。
+
+> 两个注意点：① 某些机型的 bootloader 会拒绝 `fastboot boot`（报
+> `FAILED (remote: ...)` 之类），那就只能走 recovery 刷包；② `fastboot boot` 虽然不写
+> 分区，但系统仍会正常挂载 `/data` 启动，所以**不是零风险**——坏镜像一样会影响数据，
+> 重要数据先备份。
+
+---
+
 ## 刷机
 
 1. **先备份 boot 分区**（recovery 里执行，或 OrangeFox/TWRP 的备份功能）：

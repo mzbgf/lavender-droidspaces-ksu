@@ -80,6 +80,11 @@ jobs:
           LOCALVERSION_OVERRIDE: ${{ inputs.localversion }}
         run: bash scripts/build.sh
 
+      - name: 自测 fastboot boot 打包路径（magiskboot 重打包 boot.img）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/tests/selftest-boot-img.sh
+
       - name: 构建摘要
         if: always()
         run: |

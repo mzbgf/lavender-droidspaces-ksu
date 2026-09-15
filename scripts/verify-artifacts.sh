@@ -64,7 +64,7 @@ if rel="$(kernel_release)"; then
   log "kernelrelease = $rel"
   expect_lv="$(grep -E '^CONFIG_LOCALVERSION=' "$OUT_DIR/.config" 2>/dev/null | tail -1 | cut -d'"' -f2 || true)"
   case "$rel" in
-    *"$expect_lv"*) log "版本串里含 LOCALVERSION=«$expect_lv» ✔" ;;
-    *) die "kernelrelease 里不含 LOCALVERSION（$expect_lv）——版本串不对" ;;
+    *"$expect_lv"*) log "版本串里含 LOCALVERSION=«${expect_lv}» ✔" ;;
+    *) die "kernelrelease 里不含 LOCALVERSION（${expect_lv}）——版本串不对" ;;
   esac
 fi
