@@ -55,9 +55,9 @@ fetch_magiskboot() {
   dest="$WORKDIR/magiskboot-$arch"
   [ -x "$dest" ] && { echo "$dest"; return; }
   apk="$(ls "$WORKDIR"/Magisk-*.apk 2>/dev/null | head -1 || true)"
-  apk="$(ls "$WORKDIR"/Magisk-*.apk 2>/dev/null | head -1 || true)"
   if [ -z "$apk" ]; then
-    log "从 Magisk ${MAGISK_VERSION} 的 APK 里取 ${arch} 版 magiskboot"
+    # 注意：这里必须输出到 stderr——函数的 stdout 会被上层用 $(...) 捕获成路径
+    log "从 Magisk ${MAGISK_VERSION} 的 APK 里取 ${arch} 版 magiskboot" >&2
     if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
       gh release download "$MAGISK_VERSION" --repo topjohnwu/Magisk \
         --pattern "Magisk-${MAGISK_VERSION}.apk" --dir "$WORKDIR" --clobber >/dev/null 2>&1 || true
@@ -76,7 +76,7 @@ fetch_magiskboot() {
   chmod +x "$dest"
   echo "$dest"
 }
-MB="$(fetch_magiskboot)"
+MB="$(fetch_magiskboot | tail -n1)"
 log "magiskboot: $MB"
 
 # 在指定目录里执行 magiskboot（容器模式挂两个点：/mb 放二进制，/w 放工作目录）
