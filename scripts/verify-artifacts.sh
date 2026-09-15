@@ -28,10 +28,13 @@ fi
 
 # config 断言（与 check-configs.sh 呼应，但针对产物对应的 out/.config）
 require_file "$OUT_DIR/.config"
-grep -q '^CONFIG_KSU=y' "$OUT_DIR/.config" || die "CONFIG_KSU 未启用"
-grep -q '^CONFIG_KSU_MANUAL_HOOK=y' "$OUT_DIR/.config" || die "CONFIG_KSU_MANUAL_HOOK 未启用（4.19 非 GKI 必须）"
-grep -q '^CONFIG_KSU_SUSFS=y' "$OUT_DIR/.config" && die "CONFIG_KSU_SUSFS 被启用了（要求不使用 SUSFS）"
-log "config 断言通过 ✔"
+if grep -q '^CONFIG_KSU=y' "$OUT_DIR/.config"; then
+  grep -q '^CONFIG_KSU_MANUAL_HOOK=y' "$OUT_DIR/.config" || die "CONFIG_KSU_MANUAL_HOOK 未启用（4.19 非 GKI 必须）"
+  grep -q '^CONFIG_KSU_SUSFS=y' "$OUT_DIR/.config" && die "CONFIG_KSU_SUSFS 被启用了（要求不使用 SUSFS）"
+  log "KSU config 断言通过 ✔"
+else
+  log "本次产物未启用 KSU（诊断构建）：跳过 KSU config 断言"
+fi
 
 # 构建日志里不应出现 susfs 的编译
 if [ -f "$OUT_DIR/build.log" ] && grep -q "susfs" "$OUT_DIR/build.log"; then

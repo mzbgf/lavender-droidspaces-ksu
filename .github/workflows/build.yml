@@ -112,6 +112,7 @@ jobs:
           include-hidden-files: true
           path: |
             AnyKernel3-lavender-*.zip
+            kernel/out/arch/arm64/boot/Image.gz-dtb
             kernel/out/build.log
             kernel/out/.config
 
