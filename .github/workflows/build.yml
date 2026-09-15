@@ -124,6 +124,6 @@ jobs:
           files: AnyKernel3-lavender-*.zip
           generate_release_notes: true
           body: |
-            内核源码固定于 `${{ env.KERNEL_PIN }}`（pix106/android_kernel_xiaomi_sdm660_southwest-ng，4.19.325）。
+            内核源码固定于 `${{ env.KERNEL_REPO }}` @ `${{ env.KERNEL_PIN }}`（Linux 4.19.325）。
             内含 Droidspaces 非 GKI 配置与补丁、reSukiSU ${{ env.RESUKISU_TAG }}（manual hook，未启用 SUSFS）。
             在 recovery 里直刷；刷前请备份 boot 分区。详见仓库 README。
