@@ -48,11 +48,25 @@ lavender 出厂内核是 4.4，但 **Android 16 在 lavender 上没有 4.4 生�
 4.19.325-cip135-st19-SouthWest-NG-0.19.4
 ```
 
-本树 defconfig 是 `# CONFIG_MODULES is not set`（驱动全部内建），所以正常情况下
-ROM 侧没有需要匹配 vermagic 的 `.ko`，版本串只影响 `uname -r` 的显示。但如果你
-的 ROM 确实带着内核对侧模块（或你换了别的基础树），就必须让它与 ROM 完全一致：
-构建时 CI 会打印 `kernelrelease`，请与手机的 `uname -r`（设置 → 关于手机 →
-内核版本）逐字比对，不一致时按 `configs/00-rom-align.config` 里的两种办法处理。
+**这个版本串对刷机是硬要求吗？不是。** 本树 defconfig（以及本配方产出的 `.config`）
+里 `MODULES` 是关闭的——内核**完全没有模块支持**，因此没有任何东西会去校验版本串：
+刷一个 `uname -r` 与 ROM 原内核不同的内核完全可以正常开机。同 SoC 的 Android 16 ROM
+也都是这种单体内核（例如 Project Infinity X 的原厂内核 config 同样是 MODULES 关闭）。
+
+唯一会出问题的情形是：你 ROM 的 `/vendor`（或 `/system`）里真的带着需要加载的 `.ko`。
+那种情况下内核必须是 `MODULES=y`，而且版本串要与那些 `.ko` 一致，才谈得上加载。
+设备上 10 秒就能查清：
+
+```sh
+su -c 'ls /vendor/lib/modules /system/lib/modules 2>/dev/null'   # 空 = 没有模块，版本串无关
+su -c lsmod
+```
+
+有输出再处理（按 `configs/00-rom-align.config` 里的说明，换 `KERNEL_PIN` 到对应
+`0.x.x` 分支，或用 workflow_dispatch 的 `localversion` 输入项覆盖）。本配方仍然沿用
+基座 defconfig 的 LOCALVERSION，只是因为那是 ROM 这条源码线的原值、保持一致零成本；
+`check-configs.sh` 里的 LOCALVERSION 断言是用来防止合并过程把它悄悄改掉（真发生过），
+并不是要求它与 ROM 必须相等。
 
 ---
 
@@ -157,7 +171,7 @@ su -c 'droidspaces check'         # 等价于 App 里的 Requirements Check
 | 现象 | 排查方向 |
 |---|---|
 | 刷完卡开机 logo | ramdisk 解压配置：确认产物 `.config` 里 `CONFIG_RD_LZ4=y` |
-| 刷完能开机但 wlan/蓝牙坏 | 版本串不一致导致模块 vermagic 不匹配：比对 `uname -r`，必要时换 `KERNEL_PIN` 到对应 `0.x.x` 分支 |
+| 刷完能开机但 wlan/蓝牙坏 | 先确认 ROM 是否带 `.ko`（`su -c 'ls /vendor/lib/modules'`）。若带，多半是内核与那些 `.ko` 的版本串/配置不一致：比对 `uname -r`，必要时换 `KERNEL_PIN` 到对应 `0.x.x` 分支。若不带（本机型 A16 ROM 的常态），去查驱动内置项是否被改动 |
 | 开机极慢 / lmkd 报错 | 确认 `CONFIG_PSI=y`（脚本已断言） |
 | `droidspaces check` 有红叉 | 看 CI 里 `check-configs.sh` 的输出；容器网络不通多半是 NAT 相关项缺失 |
 | 进不去 root / KSU safe mode | 本树 `CONFIG_KPROBES` 已关闭；若仍进 safe mode，检查 hook 是否被上游改动影响 |
