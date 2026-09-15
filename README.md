@@ -209,11 +209,25 @@ bash scripts/build-local.sh    # 拉源码（按固定 commit）→ 装工具链
 
 **未验证（需要你自己确认）**
 
-- **实际刷入 boot 分区**后的表现（目前全部验证都走 `fastboot boot` 临时启动，从未写入分区）。
-  临时启动与真实刷入共用同一份内核与同一个 ramdisk，但刷入后还牵涉 recovery 的
-  AnyKernel3 流程；
-- Droidspaces 的「高级硬件功能」（GPU / 直接硬件访问等）尚未测试；
+- Droidspaces 的「高级硬件功能」（GPU 加速 / 直接硬件访问 / Wayland 桌面）——这正是
+  当前的目标，见下方「下一步」；
 - 长时间（数天）使用与待机功耗表现。
+
+**已实刷验证（2026-09-16，`fastboot flash boot`，非临时启动）**
+
+- 用 `scripts/make-boot-img.sh` 产出镜像 → `fastboot flash boot` → 正常开机，
+  `uname -r` 为 `4.19.325-st20-San-Kernel-Aegis-R1.1.108`，`su -c id` 返回
+  `uid=0 … context=u:r:ksu:s0`（**root 从此持久可用**，不再依赖临时启动），
+  dmesg 0 条 `Unable to handle`；
+- 刷前备份：`su -c 'dd if=/dev/block/bootdevice/by-name/boot of=/sdcard/boot-backup.img'`，
+  回退：`fastboot flash boot boot-backup.img`；
+- 两个踩过的坑（脚本与文档都已处理）：
+  1. **镜像必须 ≤ boot 分区大小**。lavender 的分区是 64 MiB，而 ROM 自带的 boot.img
+     比分区大 90 字节（尾部纯零填充），直接拿去 `fastboot flash` 会报
+     `Error flashing partition : Volume Full`。`make-boot-img.sh` 现在会自动补齐/截断到
+     分区大小（可用 `--partition-size` 覆盖）；
+  2. **AVB 不会拦**：分区里的 AVB footer 是原厂刷机时留下的、与当前内核早已不匹配
+     （设备本来就跑第三方内核），所以未签名的自编内核可以直接刷入，无需动 vbmeta。
 
 刷机前请务必读完下一节的备份与回滚步骤。
 
@@ -398,6 +412,36 @@ Rosetta 的代价远不止 30%。所以日常改代码迭代走 B，出正式包
 
 1. **注释里只写符号名本身**（写 `LOCALVERSION`、`MEMCG`），需要示范完整写法时用占位符 `CONFIG_<符号>`；合法的真配置行只有 `CONFIG_<符号>=y` 和 `# CONFIG_<符号> is not set` 两种。`scripts/merge-configs.sh` 里的 `lint_fragments` 会硬校验，违规直接构建失败。
 2. `scripts/check-configs.sh` 会从基座 defconfig 读出应有的 `LOCALVERSION` 并与合并结果逐字比对，值被改动就立刻报错。
+
+## 下一步（当前目标）：Droidspaces 硬件加速 + 主流 Wayland 桌面
+
+**目标**：在容器里启用 **GPU 硬件加速**，并跑起 **niri 或 hyprland**。
+
+已探明的现状（2026-09-16 真机侦察）：
+
+- 本机的显示与 GPU 都是 **CAF 传统栈**：显示走 fbdev（`FB_MSM` / `FB_MSM_MDSS`），
+  GPU 走 KGSL（`QCOM_KGSL`，节点 `/dev/kgsl-3d0`，Adreno 512）。
+  **整棵树没有启用 DRM**（无 `/dev/dri`、无 `/sys/class/drm`）——这意味着
+  VirGL 那条路（需要 virtio-gpu / DRM）在本机不成立，能走的是 Droidspaces 文档里的
+  **Turnip（高通 Adreno 原生）**模式。
+- Droidspaces v6.5.0（`container.config` / CLI）与图形相关的开关：
+  `enable_gpu_mode`（`--gpu`，GPU 加速节点）、`enable_hw_access`（`-H`，直通 /dev）、
+  `enable_termux_x11`（`-X`，Termux:X11 显示支持）、`enable_virgl`（本机不可用）。
+- 已知限制：同 SoC 机型上 `enable_hw_access=1` 会导致整机假死 → 需与 `--gpu` 分开、
+  逐节点排查；容器用 **Debian 13 / Ubuntu 24.04 / Alpine**（systemd ≥ v258 的发行版
+  在 4.19 上跑不起来）。
+- 容器现状：已有 Alpine v3.23 的 `test` 容器（NAT 联网已验证通过）。
+
+拟定的路线（逐项待验证，每步都按「先抓 dmesg、再下结论」的规矩来）：
+
+1. 起一个 Debian 13 容器并开 `--gpu`，在容器内装 `mesa-vulkan-drivers` / `vulkan-tools`，
+   用 `vulkaninfo` 确认 Turnip 能否认到 Adreno 512 —— **这是「硬件加速成立」的判据**；
+2. 显示通路：`-X`（Termux:X11）提供一个 GPU 加速的 X 显示，Wayland 合成器以嵌套方式跑在
+   其上（wlroots 系可用 `WLR_BACKENDS=x11`）；若嵌套不通，退到 headless + VNC
+   （`wayvnc`）的呈现方式；
+3. 桌面：先 **hyprland**（wlroots 系，嵌套后端成熟），再试 **niri**（Smithay 系）；
+4. 收口：把可用配置写回本 README，并把「GPU 加速是否可用」加进
+   `scripts/verify-on-device.sh` 的检查项。
 
 ## 许可与致谢
 

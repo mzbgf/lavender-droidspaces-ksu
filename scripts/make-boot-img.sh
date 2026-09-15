@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 用 magiskboot 把「原厂 boot.img 的 ramdisk/header」与「本仓库编译出的内核」重打包成
-# 可直接 `fastboot boot` 的镜像（仅 RAM 内临时启动验证，不写分区）。
+# 可 `fastboot boot`（临时验证）或 `fastboot flash boot`（落盘）的镜像。
 #
 # 为什么用 magiskboot：它就是这个用途的专用工具（AnyKernel3 在设备端用的也是它），
 # header v0~v4、AVB/AVBf、ramdisk 压缩（gzip/lz4/lz4_legacy/xz…）、追加 dtb 的拆分与
@@ -10,20 +10,25 @@
 #   bash scripts/make-boot-img.sh --stock stock-boot.img --kernel AnyKernel3-lavender-*.zip -o new-boot.img
 #   --stock：ROM 原厂 boot.img（ramdisk 必须是 ROM 自己那份）
 #   --kernel：刷机包 zip，或裸的 Image.gz-dtb
+#   --partition-size：boot 分区字节数（默认 67108864 = 64 MiB，lavender 的分区表就是它）。
+#     产物会被补齐/截断到这个大小：只能小于等于分区才能 fastboot flash，而 ROM 自带的
+#     boot.img 有时比分区还大几十字节（lavender 上是 +90 B，直刷报 Volume Full）。
 #
 # 平台：Linux 直接跑；macOS 自动改用容器跑 Linux 版 magiskboot（arm64 原生速度）。
 source "$(dirname "$0")/lib.sh"
 
 MAGISK_VERSION="${MAGISK_VERSION:-v30.7}"
 WORKDIR="${WORKDIR:-$REPO_ROOT/.makeboot}"
+PARTITION_SIZE="${PARTITION_SIZE:-67108864}"
 
 STOCK=""; KERNEL=""; OUTPUT="new-boot.img"
 while [ $# -gt 0 ]; do
   case "$1" in
     --stock) STOCK="$2"; shift 2 ;;
     --kernel) KERNEL="$2"; shift 2 ;;
+    --partition-size) PARTITION_SIZE="$2"; shift 2 ;;
     -o|--output) OUTPUT="$2"; shift 2 ;;
-    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
     *) die "未知参数: $1" ;;
   esac
 done
@@ -155,6 +160,24 @@ log "repack"
 mb "$STAGE" repack stock.img new-boot.img >"$WORKDIR/repack.log" 2>&1 || die "magiskboot 重打包失败，见 ${WORKDIR}/repack.log"
 require_file "$STAGE/new-boot.img"
 cp -f "$STAGE/new-boot.img" "$OUTPUT"
+OUT_SIZE="$(wc -c <"$OUTPUT" | tr -d ' ')"
+
+# 对齐到 boot 分区大小。只有 ≤ 分区大小的镜像才 flash 得进去（lavender 的分区是 64 MiB；
+# ROM 自带的 boot.img 比它大 90 字节，直刷会报 "Error flashing partition : Volume Full"）。
+if [ "$OUT_SIZE" -gt "$PARTITION_SIZE" ]; then
+  extra=$((OUT_SIZE - PARTITION_SIZE))
+  if cmp -s -n "$extra" <(tail -c "$extra" "$OUTPUT") /dev/zero; then
+    head -c "$PARTITION_SIZE" "$OUTPUT" >"$OUTPUT.tmp" && mv -f "$OUTPUT.tmp" "$OUTPUT"
+    log "镜像比分区大 ${extra} 字节，但超出部分是零填充 → 已截断到分区大小（可 flash）"
+  else
+    die "镜像比 boot 分区大 ${extra} 字节且超出部分不是零填充：刷不进去，请检查内核体积"
+  fi
+elif [ "$OUT_SIZE" -lt "$PARTITION_SIZE" ]; then
+  pad=$((PARTITION_SIZE - OUT_SIZE))
+  dd if=/dev/zero bs=4096 count=$(( (pad + 4095) / 4096 )) >>"$OUTPUT" 2>/dev/null
+  head -c "$PARTITION_SIZE" "$OUTPUT" >"$OUTPUT.tmp" && mv -f "$OUTPUT.tmp" "$OUTPUT"
+  log "已用零填充补齐到分区大小（+${pad} 字节）"
+fi
 OUT_SIZE="$(wc -c <"$OUTPUT" | tr -d ' ')"
 log "写出 ${OUTPUT}（${OUT_SIZE} 字节）"
 
