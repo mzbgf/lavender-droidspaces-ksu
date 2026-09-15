@@ -23,7 +23,9 @@ lavender 出厂内核是 4.4，但 **Android 16 在 lavender 上没有 4.4 生�
   它在 Android 16 发布说明里给出的 SoC↔内核↔Android 对照表明确写着
   「SDM660 → 4.19 → 支持到 Android 16」，而 4.4 的 MSM8998/MSM8996 一栏止步 Android 15。
 - lavender 现存所有 Android 16 ROM（Lunaris、Matrixx、DerpFest、PixelOS、
-  Infinity-X、crDroid、Axion…）内核版本串统一是 `4.19.325-SouthWest-NG-*`。
+  Infinity-X、crDroid、Axion…）内核都是 `4.19.325` 这条线。本机这台 ROM 上，
+  实际刷的是 San-Kernel（版本串 `4.19.325-st19-San-Kernel-Aegis-R1.1.108`），
+  它也正是本配方选择的基座源码线（见下一节）。
 - 要在 4.4 上跑 A16，需要把 4.14~5.4 的 eBPF 特性整套 backport 回来
   （唯一公开成功案例是三星 Exynos 8895 的 S8，做这事的开发者花了数月），
   lavender 圈没人做过，也没有对应 ROM。
@@ -337,9 +339,9 @@ Rosetta 的代价远不止 30%。所以日常改代码迭代走 B，出正式包
 
 > **片段里任何位置出现带 `CONFIG_` 前缀的符号名（哪怕在注释里、哪怕是被 `#` 注释掉的赋值行），都会让基座里那一项被删掉**；如果片段里没有同名真配置行补回来，该项就会悄悄退回 Kconfig 默认值。
 
-本仓库第一次云编译就被这个坑清掉了 `CONFIG_LOCALVERSION`，导致 `uname -r` 少了
-`-SouthWest-NG-0.19.4`（日志里表现为 `Value of CONFIG_LOCALVERSION is redefined ...`）。
-现在的防线有两道，改配置时请遵守：
+本仓库第一次云编译就被这个坑清掉了 `CONFIG_LOCALVERSION`，导致 `uname -r` 少了版本后缀
+（日志里表现为 `Value of CONFIG_LOCALVERSION is redefined ...`）。现在的防线有两道，
+改配置时请遵守：
 
 1. **注释里只写符号名本身**（写 `LOCALVERSION`、`MEMCG`），需要示范完整写法时用占位符 `CONFIG_<符号>`；合法的真配置行只有 `CONFIG_<符号>=y` 和 `# CONFIG_<符号> is not set` 两种。`scripts/merge-configs.sh` 里的 `lint_fragments` 会硬校验，违规直接构建失败。
 2. `scripts/check-configs.sh` 会从基座 defconfig 读出应有的 `LOCALVERSION` 并与合并结果逐字比对，值被改动就立刻报错。
