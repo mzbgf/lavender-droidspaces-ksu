@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       localversion:
-        description: 'CONFIG_LOCALVERSION 覆盖（留空＝沿用 ROM 线的 -SouthWest-NG-0.19.4）'
+        description: 'CONFIG_LOCALVERSION 覆盖（留空＝沿用基座树的 -San-Kernel-Aegis-R1.1.108）'
         required: false
         default: ''
   push:
