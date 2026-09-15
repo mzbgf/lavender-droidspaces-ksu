@@ -1,0 +1,17 @@
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -712,7 +712,13 @@
+ 	 * shrink, but skip global shrink.  This may result in premature
+ 	 * oom.
+ 	 */
+-	if (!mem_cgroup_disabled() && !mem_cgroup_is_root(memcg))
++	/*
++	 * kshrinkd() 的循环第一次迭代传的是 memcg = NULL（本树私有线程，上游没有），
++	 * 而 mem_cgroup_is_root(NULL) 返回 false，于是会走进下面这个 memcg 分支并
++	 * 解引用 NULL（崩在 shrink_slab_memcg+0x80：ldrb w8,[x8,#124]）。
++	 * NULL 的语义是「全局回收」，因此这里显式判空走全局分支。
++	 */
++	if (memcg && !mem_cgroup_disabled() && !mem_cgroup_is_root(memcg))
+ 		return shrink_slab_memcg(gfp_mask, nid, memcg, priority);
+ 
+ 	read_lock(&shrinker_rwlock);

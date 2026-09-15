@@ -276,6 +276,7 @@ su -c 'droidspaces check'         # 等价于 App 里的 Requirements Check
 | `droidspaces check` 有红叉 | 看 CI 里 `check-configs.sh` 的输出；容器网络不通多半是 NAT 相关项缺失 |
 | 进不去 root / KSU safe mode | 本树 `CONFIG_KPROBES` 已关闭；若仍进 safe mode，检查 hook 是否被上游改动影响 |
 | 刷完屏幕只剩背光、一直卡着 | 本基座 defconfig 里 `PANIC_ON_OOPS` 是开的、`PANIC_TIMEOUT` 是 `-1`：任何 oops 都会立刻 panic 且永不自动重启。已由 `configs/30-boot-compat.config` 改成「oops 只杀任务 + panic 后 5 秒重启」。真正的 panic 日志去 recovery 里读 `/sys/fs/pstore/console-ramoops-0` |
+| 开机约 30~55 秒后卡死并自动重启 | 本树有个私有的 `kshrinkd` 线程（上游 4.19 没有），它循环的第一次迭代传 `memcg = NULL`，而 `shrink_slab()` → `shrink_slab_memcg()` 会直接解引用这个 NULL → oops；设备上 `panic_on_oops=1`，于是立刻 panic 重启。已由 `patches/buildfix/0004-kshrinkd-null-memcg.patch` 修掉。判据：pstore 里出现 `Process kshrinkd0` + `pc : shrink_slab_memcg+0x80` + `NULL pointer dereference at ...007c` |
 | 设备配置与我编的对不上：`/proc/config.gz` 里 `KSU`/`CGROUP_*` 全是关的 | **本基座树把 `IKCONFIG` 的数据源硬编码成了厂家的完整 defconfig**（`kernel/Makefile` 里 `config_data.gz` 的依赖写死为 `arch/arm64/configs/vendor/sdm660-perf-full_defconfig`），所以 `/proc/config.gz` 报的是厂家那份配置，**与当前运行内核的真实配置无关**，不能用它做断言。要判断真实配置请看运行时能力（`/proc/cgroups`、`/proc/self/ns`、`/proc/filesystems`）或构建时的 `out/.config` |
 | 本地构建报「预检失败，补丁与源码树不匹配」 | 十有八九不是补丁的问题，而是容器里**缺 `patch` 命令**（旧版镜像就缺，缺命令被报成了补丁不匹配）。现在的镜像已补齐，且 `apply-patches.sh` 会打印补丁的真实错误 |
 | 构建日志里出现 `Error in reading or end of file.` | 这不是编译错误：是 `make oldconfig` 遇到新符号去交互提问、读到 EOF。构建照常继续，产物正常 |

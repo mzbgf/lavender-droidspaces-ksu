@@ -1,10 +1,13 @@
 # 补丁清单
 
-全部补丁都是基于固定 commit
-`b2ee0c8f4cd75fbb2097b9bcd8dc3306166f241c`
-（`pix106/android_kernel_xiaomi_sdm660_southwest-ng`，Linux 4.19.325）的原始文件
-**精确生成**的（生成脚本保证上下文与空白字符逐字节一致），并已逐个
-`patch -p1 --dry-run` 校验通过。
+补丁最初是基于 `pix106/android_kernel_xiaomi_sdm660_southwest-ng`
+（commit `b2ee0c8f4cd75fbb2097b9bcd8dc3306166f241c`）的原始文件**精确生成**的
+（生成脚本保证上下文与空白字符逐字节一致）。
+
+**换基座树之后**（现为 `user-why-red/android_kernel_xiaomi_sdm660_419`，
+commit `6d41c71e301a3c3394167dc5ef03cbc846ae6772`），5 个旧补丁已逐个
+`patch -p1 --dry-run` 复验：全部仍可应用（只有行号偏移，无上下文冲突），
+因此没有重新生成；`buildfix/0004` 是直接针对新树生成的。
 
 应用顺序与幂等判据由 `scripts/apply-patches.sh` 中的表定义。
 
@@ -13,6 +16,7 @@
 | `buildfix/0001-cgroup-noprefix-compat-links.patch` | `kernel/cgroup/cgroup.c` | 在 `cgroup_add_file()` 里为 noprefix 挂载的 cgroup v1 根额外创建 `控制器名.文件名` 前缀别名 | 必需。Android 把多个 legacy 控制器以 `noprefix` 挂载，而 Droidspaces/LXC 会去探测经典的带前缀名字（`cpuacct.usage` 之类），没有别名就探不到 |
 | `buildfix/0002-write-once-expression.patch` | `include/linux/compiler.h` | 把本树 CAF 版的 `WRITE_ONCE`（`do { ... } while (0)` 语句形式）恢复成上游 4.19 的语句表达式形式 | 必需。`lib/fault-inject.c:114` 写了 `if (!WRITE_ONCE(current->fail_nth, fail_nth - 1))`，语句形式在这一处直接编译不过 |
 | `buildfix/0003-extract-cert-openssl3-compat.patch` | `scripts/extract-cert.c` | OpenSSL ≥ 3 时不再包含 `<openssl/engine.h>`（3.5 起该头文件被移除），复用它自己已有的 BoringSSL 分支 | 条件必需。Ubuntu 22.04/24.04 的 OpenSSL 3.0 仍有 `engine.h`，此时脚本会自动跳过；Fedora 44 之类（OpenSSL 3.5）必须用它 |
+| `buildfix/0004-kshrinkd-null-memcg.patch` | `mm/vmscan.c` | `shrink_slab()` 里对 `memcg` 加判空：NULL 时走全局回收分支，而不是进 memcg 分支 | **必需**。本树有个私有的 `kshrinkd` 线程（上游 4.19 没有），它的循环第一次迭代就传 `memcg = NULL`；而 `mem_cgroup_is_root(NULL)` 返回 false，于是走进 `shrink_slab_memcg()` 并解引用 NULL（实测崩在 `shrink_slab_memcg+0x80` 的 `ldrb w8, [x8, #124]`，故障地址 `0x7c`）。设备上 `panic_on_oops=1`，所以这个 oops 会直接 panic 重启——表现为「开机约 30~55 秒后卡死自动重启」 |
 | `resukisu/0001-manual-hooks.patch` | `fs/stat.c`、`fs/exec.c`、`fs/open.c`、`kernel/reboot.c` | 按 ReSukiSU 官方 manual integrate 文档，在 4.19 上挂 stat / execve / faccessat / sys_reboot 四组 hook | 必需。4.19 非 GKI 不能用 tracepoint hook（仅 5.10+ GKI2），`CONFIG_KSU_MANUAL_HOOK` 会在编译期逐个校验这些 hook，缺一个就编译失败 |
 | `resukisu/0002-selinux-symbol-exports.patch` | `security/selinux/selinuxfs.c` | 去掉 `write_op` 与 `sel_handle_status_ops` 的 `static` | 必需。ReSukiSU 在未开 `CONFIG_KALLSYMS_ALL` 时会校验这些符号导出，缺失即编译失败。4.19 已有 `selinux_state` 结构，所以官方文档里标注 “4.17-” 的其余导出（`selinux_status_page`、`policy_rwlock`、`sel_mutex`、`selinux_ops`）不需要处理 |
 
