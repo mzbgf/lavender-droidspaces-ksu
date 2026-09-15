@@ -71,7 +71,27 @@ export ARCH
 log "merge_config.sh -m -O $OUT_DIR"
 scripts/kconfig/merge_config.sh -m -O "$OUT_DIR" "${BASE[@]}" "${FRAGS[@]}"
 
+# 解析配置时必须带上与编译阶段一致的工具链参数。
+#
+# Kconfig 里有一批符号的默认值来自「编译器能力探测」（cc-option），探测用的是
+# make 变量 CC——不传的话 kbuild 退到 $(CROSS_COMPILE)gcc，也就是宿主机的 gcc。
+# 于是同一份片段在不同宿主机上会合出不同结果：CI runner（Ubuntu 22.04）的
+# GCC 11 不认识 -ftrivial-auto-var-init，本机容器的 GCC 12 认识，三选一
+# INIT_STACK 就分叉成了 CI=NONE / 本地=ZERO（NONE 那份真机开机约 54 秒必崩）。
+# 这里把 CC/LLVM/交叉前缀一次性传齐，让两边评出的默认值一致。
+CONF_MAKE=(
+  O="$OUT_DIR" ARCH="$ARCH"
+  LLVM=1 LLVM_IAS=1
+  CLANG_TRIPLE=aarch64-linux-gnu-
+  CROSS_COMPILE=aarch64-linux-gnu-
+  CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+  CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+)
+# CC_CMD 形如 "ccache clang"；没有它时交给 LLVM=1 让 kbuild 自己选 clang
+[ -n "${CC_CMD:-}" ] && CONF_MAKE+=(CC="$CC_CMD")
+[ -n "${CC:-}" ] && [ -z "${CC_CMD:-}" ] && CONF_MAKE+=(CC="$CC")
+
 log "olddefconfig 解析依赖"
-make O="$OUT_DIR" ARCH="$ARCH" olddefconfig
+make "${CONF_MAKE[@]}" olddefconfig
 
 log "kernelrelease = $(make O="$OUT_DIR" ARCH="$ARCH" -s kernelrelease)"

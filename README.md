@@ -145,6 +145,32 @@ bash scripts/build-local.sh    # 拉源码（按固定 commit）→ 装工具链
 
 ## 构建状态：已验证 / 未验证
 
+> **2026-09-16 补充：CI 产物 60~90 秒崩溃的根因已查明并修复，但修复后的 CI 产物
+> 尚未在真机上复验（见本行下方「本次事故」）。在复验通过之前，请以本地构建的
+> 产物为交付依据。**
+
+### 本次事故：CI 与本地构建「同源不同配置」的静默分叉（已修）
+
+- **现象**：CI 产物（GitHub Actions，AOSP clang r416183b）在真机上开机约 54 秒时
+  `kswapd0` 在回收路径空指针 oops（`pc : buffer_check_dirty_writeback+0x70/0xa0`），
+  之后整机僵死/重启；本地产物稳定。
+- **根因**：`scripts/merge-configs.sh` 解析配置时没有把工具链参数传给 `make`，
+  kbuild 于是用宿主机的 `gcc` 去做 Kconfig 的编译器能力探测。CI runner 的 GCC 11
+  不认识 `-ftrivial-auto-var-init`，本机容器的 GCC 12 认识 —— 三选一 `INIT_STACK`
+  因此静默分叉：**CI=`NONE`（不做栈变量初始化）、本地=`ZERO`**。
+  两份产物的编译、断言、打包全部照常通过，只有真机行为不同。
+- **证据**：同一棵树、同一份片段，配置阶段用「不认识该选项的编译器」跑 →
+  `INIT_STACK_NONE=y`；带上工具链参数（真 clang）跑 → `INIT_STACK_ALL_ZERO=y`。
+  两份产物的 `.config` 差异只有 12 行：4 行编译器版本串 + 这两项。
+- **修复**：① `merge-configs.sh` 解析配置时传齐 `LLVM=1`/`CC`/交叉前缀（治根）；
+  ② `configs/30-boot-compat.config` 显式钉住 `INIT_STACK_ALL_ZERO` **和 `LTO_NONE`**
+  （同一个 bug 还让基座 defconfig 想开的 ThinLTO 被静默降级成了 NONE，而真机验证过的
+  基线正是 NONE，所以这里明确钉住以保持一致；要启用 ThinLTO 属于独立的代码生成变更，
+  须单独真机 A/B 验证）；
+  ③ `check-configs.sh` + `verify-artifacts.sh` 断言（漂移即构建失败）。
+- **状态**：修复后的配置解析结果与真机验证过的基线 `.config` **逐字节一致**；
+  CI 重建 + 真机复验待做。
+
 **已验证（真机 `fastboot boot` 实测，逐项有证据）**
 
 内核侧（构建产物中直接核验）：
@@ -287,8 +313,11 @@ su -c 'droidspaces check'         # 等价于 App 里的 Requirements Check
 | 开机约 30~55 秒后卡死并自动重启 | 本树有个私有的 `kshrinkd` 线程（上游 4.19 没有），它循环的第一次迭代传 `memcg = NULL`，而 `shrink_slab()` → `shrink_slab_memcg()` 会直接解引用这个 NULL → oops；设备上 `panic_on_oops=1`，于是立刻 panic 重启。已由 `patches/buildfix/0004-kshrinkd-null-memcg.patch` 修掉。判据：pstore 里出现 `Process kshrinkd0` + `pc : shrink_slab_memcg+0x80` + `NULL pointer dereference at ...007c` |
 | 设备配置与我编的对不上：`/proc/config.gz` 里 `KSU`/`CGROUP_*` 全是关的 | **本基座树把 `IKCONFIG` 的数据源硬编码成了厂家的完整 defconfig**（`kernel/Makefile` 里 `config_data.gz` 的依赖写死为 `arch/arm64/configs/vendor/sdm660-perf-full_defconfig`），所以 `/proc/config.gz` 报的是厂家那份配置，**与当前运行内核的真实配置无关**，不能用它做断言。要判断真实配置请看运行时能力（`/proc/cgroups`、`/proc/self/ns`、`/proc/filesystems`）或构建时的 `out/.config` |
 | 本地构建报「预检失败，补丁与源码树不匹配」 | 十有八九不是补丁的问题，而是容器里**缺 `patch` 命令**（旧版镜像就缺，缺命令被报成了补丁不匹配）。现在的镜像已补齐，且 `apply-patches.sh` 会打印补丁的真实错误 |
-| 构建日志里出现 `Error in reading or end of file.` | 这不是编译错误：是 `make oldconfig` 遇到新符号去交互提问、读到 EOF。构建照常继续，产物正常 |
-| 本地改了 `Dockerfile` 却不生效 | 旧版包装脚本「镜像已存在就跳过构建」。现在每次都过一遍 `docker build`（全缓存命中约 1 秒），改了就会生效 |
+| 构建日志里出现 `Error in reading or end of file.` | **别再当噪音忽略**（上一版这里就是这么写的，后来查出一整次事故）。`make` 在解析配置时会跑一次交互式提问，读到 EOF 就取**默认值**；而 Kconfig 里有一批符号的默认值来自编译器能力探测，于是同一份片段在不同宿主机上会合出不同结果。2026-09-16 查实的一次：配置阶段没传工具链参数，探测落到宿主机 `gcc`（CI runner 是 GCC 11、本地容器是 GCC 12），`INIT_STACK` 三选一因此分叉成 CI=`NONE` / 本地=`ZERO`，而 `NONE` 那份真机开机约 54 秒必崩（见下一行）。现已在 `scripts/merge-configs.sh` 里把工具链参数传齐，并把这一项显式钉住 + 断言 |
+| 开机约 54 秒、`kswapd0` 在回收路径空指针 oops，随后整机僵死（或重启） | 内核没做栈变量初始化（`INIT_STACK_NONE`）。本基座树 backport 的 MGLRU 回收路径 `lru_gen_shrink_lruvec` → `evict_pages` → `shrink_page_list` → `buffer_check_dirty_writeback` 会在某种页状态下解引用空指针，栈变量零初始化（`ALL_ZERO`）时不会走到那里。判据：dmesg 里 `Process kswapd0` + `pc : buffer_check_dirty_writeback+0x70/0xa0` + `lr : shrink_page_list+0x4e0`，之后 `dumpsys`/`adb shell` 全部无响应。已由 `configs/30-boot-compat.config` 钉住 `INIT_STACK_ALL_ZERO` + `check-configs.sh`、`verify-artifacts.sh` 两道断言守住 |
+| 本地改了 `Dockerfile` 却不生效 | 镜像是按需构建的，判据是 `docker/.build-state` 里记的那份 Dockerfile mtime：不一致就会自动重建。只有状态文件缺失时（新机器/首次运行）才不重建，那时用 `FORCE_IMAGE=1` |
+| 改了 `Dockerfile` 但**不想**重建（重建要重下整个工具链） | 把新 mtime 直接写进记录，让它看起来一致——此时记录里的 mtime 并不代表镜像真的来自这份 Dockerfile：`printf 'lavender-builder-native:4.19 %s\n' "$(stat -f %m docker/Dockerfile.native)" > docker/.build-state` |
+| 本地 arm64 镜像（1.77 GB 单层）比 `Dockerfile.native` 里写的构建过程「小」很多 | 它是把旧镜像 `docker export` / `docker import` 压成单层后的裁剪版：去掉了 apt 的 clang-14（350 MB，从未用上）和 LLVM 官方包里内核用不到的部分（静态库 615 MB、C++ 头文件、lldb/clangd/IR 工具等），`/opt/clang` 从 2.9 GB 降到 1.2 GB。`Dockerfile.native` 现在带同样的裁剪，重建得到等价镜像。已实测：用它和用旧镜像各编一次，`vmlinux` 只差 25 字节（构建时间戳），3131 个目标文件里只有 `init/version.o`、`usr/initramfs_data.o`、`vmlinux.o` 三个不同 |
 
 ## 目录结构
 
@@ -310,6 +339,7 @@ scripts/                      构建脚本（CI 与本地共用同一套）
 docker/
   Dockerfile                  amd64 + AOSP clang r416183b（与 CI 同构，走 Rosetta）
   Dockerfile.native           arm64 原生 + LLVM 12.0.1（非转译路线，快）
+  .build-state                本地记录：<镜像名> <构建时那份 Dockerfile 的 mtime>（不进 git）
 anykernel/anykernel.sh        适配 lavender 的 AnyKernel3 脚本模板
 ```
 
@@ -327,6 +357,16 @@ DOCKERFILE=$PWD/docker/Dockerfile.native TOOLCHAIN_DIR=/opt \
 SRC_VOL=lavender-san-src OUT_VOL=lavender-san-out-native JOBS=10 \
 bash scripts/local-docker-build.sh
 ```
+
+镜像**按需构建**：`docker/.build-state` 里记着上次构建时那份 `Dockerfile` 的 mtime，
+每次构建前比一次，不一致就重建，构建成功后把新 mtime 记回去；一致就直接复用镜像。
+这样正常迭代不会白跑 `docker build`——构建缓存一旦被 `docker builder prune` 清过，
+白跑一遍就要重新下载整个工具链层（amd64 1.4 GB / arm64 3.0 GB）。要强制重建用
+`FORCE_IMAGE=1`。
+
+两个 `Dockerfile` 的层都按「最不易变 → 最易变」排：`base → 最小 apt（下载解包工具链要用）
+→ 工具链 → 完整 apt 依赖 → ENV`。工具链那层最大、也最少变，排在 apt 依赖之前，
+所以以后改依赖列表只会重跑后面那层 apt，不会连累工具链重新下载。
 
 两边的量级差别（同一棵树、同一台机器、全量冷构建）：
 

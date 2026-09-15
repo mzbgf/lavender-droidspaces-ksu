@@ -86,6 +86,26 @@ for s in MODULES KPROBES; do
   v="$(get "$s")"
   if [ "$v" = "y" ]; then fail "$s=y（目标 ROM 的 stock 内核为 n）"; else pass "$s 未启用"; fi
 done
+
+# 栈变量初始化必须显式钉在 ZERO：这一项是「编译器能力探测决定默认值」的三选一，
+# 不钉就会随工具链静默分叉。CI 曾落到 NONE，真机表现是开机约 54 秒时在回收路径
+# buffer_check_dirty_writeback 空指针 oops，kswapd 被杀、整机随后僵死。
+v="$(get INIT_STACK_ALL_ZERO)"
+if [ "$v" = "y" ]; then
+  pass "INIT_STACK_ALL_ZERO=y"
+else
+  fail "INIT_STACK_ALL_ZERO -> '${v:-未设置}'（期望 y；落到 NONE 的构建在真机上会崩）"
+fi
+
+# LTO 三选一同样由编译器能力探测决定（基座 defconfig 想开 ThinLTO，但探测失败会
+# 静默退回 NONE）。与已验证基线保持一致钉在 NONE；要用 ThinLTO 属于独立的代码
+# 生成变更，必须单独真机 A/B 验证后再同时改这里与片段。
+v="$(get LTO_NONE)"
+if [ "$v" = "y" ]; then
+  pass "LTO_NONE=y"
+else
+  fail "LTO_NONE -> '${v:-未设置}'（期望 y；与已验证基线不一致的代码生成变更需单独验证）"
+fi
 v="$(get ANDROID_PARANOID_NETWORK)"
 if [ -z "$v" ] || [ "$v" = "n" ]; then pass "ANDROID_PARANOID_NETWORK 未启用"; else warn_ "ANDROID_PARANOID_NETWORK=${v}（该树保留了老逻辑，仅提示）"; fi
 

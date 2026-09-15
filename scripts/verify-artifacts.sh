@@ -35,6 +35,10 @@ require_file "$OUT_DIR/.config"
 grep -q '^CONFIG_KSU=y' "$OUT_DIR/.config" || die "CONFIG_KSU 未启用"
 grep -q '^CONFIG_KSU_MANUAL_HOOK=y' "$OUT_DIR/.config" || die "CONFIG_KSU_MANUAL_HOOK 未启用（4.19 非 GKI 必须）"
 grep -q '^CONFIG_KSU_SUSFS=y' "$OUT_DIR/.config" && die "CONFIG_KSU_SUSFS 被启用了（要求不使用 SUSFS）"
+# 这一项在编译期还会被 Kconfig 重新解析一次（make 触发的非交互补全），
+# 所以要在编完之后再断言一遍：落到 NONE 的镜像真机开机约 54 秒必崩。
+grep -q '^CONFIG_INIT_STACK_ALL_ZERO=y' "$OUT_DIR/.config" \
+  || die "CONFIG_INIT_STACK_ALL_ZERO 未生效（构建期间配置被改动？落到 NONE 的镜像真机会崩）"
 log "config 断言通过 ✔"
 
 # 构建日志里不应出现 susfs 的编译
