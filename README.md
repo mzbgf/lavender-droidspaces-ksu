@@ -90,6 +90,30 @@ bash scripts/build-local.sh    # 拉源码（按固定 commit）→ 装工具链
 
 ---
 
+## 构建状态：已验证 / 未验证
+
+**已验证（云端构建全绿，产物下载后逐项复核过）**
+
+- 内核编译通过，产物 `Image.gz-dtb` 18.4 MiB；
+- 从产物里解出的内核 banner 就是最终 `uname -r`：
+  `Linux version 4.19.325-cip135-st19-SouthWest-NG-0.19.4 (droidspaces@lavender)`；
+- 镜像里含 lavender 的 dtb：`Qualcomm Technologies, Inc. SDM 660 PM660 + PM660L MTP F7A`；
+- reSukiSU 确实编入内核：34 个 `drivers/kernelsu/*.o`、构建日志 `using Manual Hook`、
+  内核侧版本号 35144、版本名 `v4.2.0-rc2-3576e6a5@ReSukiSU`；
+- `CONFIG_KSU_SUSFS` 未启用，构建日志里没有任何 susfs 的编译；
+- Droidspaces 核心项（24 项）、网络隔离项（24 项）、KernelSU 项与开机关键项
+  全部在 `check-configs.sh` 里逐项断言通过，任一失败即构建失败。
+
+**未验证（需要你在真机上确认）**
+
+- 刷入后能否正常开机、wlan/蓝牙/信号是否正常；
+- reSukiSU 管理器能否正常授权（`su -c id` 返回 uid=0）；
+- Droidspaces 的 Requirements Check 是否全绿、发行版容器能否真正起来。
+
+刷机前请务必读完下一节的备份与回滚步骤。
+
+---
+
 ## 刷机
 
 1. **先备份 boot 分区**（recovery 里执行，或 OrangeFox/TWRP 的备份功能）：
