@@ -56,6 +56,7 @@ FRAGS=(
   arch/arm64/configs/vendor/local/10-droidspaces.config
   arch/arm64/configs/vendor/local/20-resukisu.config
   arch/arm64/configs/vendor/local/30-boot-compat.config
+  arch/arm64/configs/vendor/local/40-gpu-drm.config
 )
 
 if [ -n "$LOCALVERSION_OVERRIDE" ]; then

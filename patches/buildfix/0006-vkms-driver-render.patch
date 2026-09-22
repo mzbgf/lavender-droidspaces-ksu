@@ -1,0 +1,32 @@
+From: lavender-droidspaces-ksu buildfix
+Subject: [PATCH] drm/vkms: 声明 DRIVER_RENDER 以产生 renderD128 渲染节点
+
+vkms 默认只有 MODESET/ATOMIC/GEM，内核因此只创建 card0 而不创建渲染节点。
+anland 的 Chroot/LXC 路径需要一个 DRM 渲染节点当 control_fd：
+
+  export ANLAND_DRM_DEVICE=/dev/dri/renderD128
+
+（GPU 命令仍全部走 /dev/kgsl-3d0，该节点只作 fd 身份/屏幕缓存键。）
+
+加上 DRIVER_RENDER 后内核会创建 renderD128。vkms 已有 GEM +
+dumb_create/dumb_map，满足渲染节点的 ioctl 子集。
+
+若改用 anland 的 PRoot 路径（ANLAND_NO_DRM_DEVICE=1 + EGL_PLATFORM=surfaceless），
+则不需要任何 DRM 节点，本补丁与 CONFIG_DRM_VKMS 可一并去掉。
+
+---
+ drivers/gpu/drm/vkms/vkms_drv.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/vkms/vkms_drv.c b/drivers/gpu/drm/vkms/vkms_drv.c
+index 5555555..6666666 100644
+--- a/drivers/gpu/drm/vkms/vkms_drv.c
++++ b/drivers/gpu/drm/vkms/vkms_drv.c
+@@ -45,6 +45,6 @@
+ 
+ static struct drm_driver vkms_driver = {
+-	.driver_features	= DRIVER_MODESET | DRIVER_ATOMIC | DRIVER_GEM,
++	.driver_features	= DRIVER_MODESET | DRIVER_ATOMIC | DRIVER_GEM | DRIVER_RENDER,
+ 	.release		= vkms_release,
+ 	.fops			= &vkms_driver_fops,
+ 	.dumb_create		= vkms_dumb_create,

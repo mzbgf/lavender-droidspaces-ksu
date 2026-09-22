@@ -1,0 +1,46 @@
+From: lavender-droidspaces-ksu buildfix
+Subject: [PATCH] drm/vkms: gem fault 回调改用 vm_fault_t 返回类型
+
+4.17 起 vm_operations_struct.fault 的返回类型从 int 改成了 vm_fault_t
+（= unsigned int），而这棵树自带的 vkms 还是旧签名，clang 以
+-Werror,-Wincompatible-function-pointer-types 拒绝编译：
+
+  vkms_drv.c:32: error: incompatible function pointer types initializing
+  'vm_fault_t (*)(struct vm_fault *)' with an expression of type
+  'int (struct vm_fault *)'
+
+只改函数的返回类型（定义 + 声明）；函数体返回的 VM_FAULT_* / 0 本来就
+是 vm_fault_t 的合法取值，语义不变。
+
+这是「启用 DRM_VKMS 以提供 renderD128 渲染节点」这一步的配套修正
+（anland 的 Chroot/LXC 路径把该节点当 control_fd 用）。
+---
+ drivers/gpu/drm/vkms/vkms_drv.h | 2 +-
+ drivers/gpu/drm/vkms/vkms_gem.c | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/vkms/vkms_drv.h b/drivers/gpu/drm/vkms/vkms_drv.h
+index 1111111..2222222 100644
+--- a/drivers/gpu/drm/vkms/vkms_drv.h
++++ b/drivers/gpu/drm/vkms/vkms_drv.h
+@@ -63,6 +63,6 @@ struct drm_plane *vkms_plane_init(struct vkms_device *vkmsdev);
+ 
+ /* Gem stuff */
+-int vkms_gem_fault(struct vm_fault *vmf);
++vm_fault_t vkms_gem_fault(struct vm_fault *vmf);
+ 
+ int vkms_dumb_create(struct drm_file *file, struct drm_device *dev,
+ 		     struct drm_mode_create_dumb *args);
+diff --git a/drivers/gpu/drm/vkms/vkms_gem.c b/drivers/gpu/drm/vkms/vkms_gem.c
+index 3333333..4444444 100644
+--- a/drivers/gpu/drm/vkms/vkms_gem.c
++++ b/drivers/gpu/drm/vkms/vkms_gem.c
+@@ -37,7 +37,7 @@ static void vkms_gem_free_object(struct drm_gem_object *obj)
+ 	kfree(gem);
+ }
+ 
+-int vkms_gem_fault(struct vm_fault *vmf)
++vm_fault_t vkms_gem_fault(struct vm_fault *vmf)
+ {
+ 	struct vm_area_struct *vma = vmf->vma;
+ 	struct vkms_gem_object *obj = vma->vm_private_data;

@@ -20,6 +20,8 @@ TABLE=(
   "buildfix/0002-write-once-expression.patch|include/linux/compiler.h|typeof\(x\) __val = \(val\);|构建修正: WRITE_ONCE 恢复表达式语义|always"
   "buildfix/0003-extract-cert-openssl3-compat.patch|scripts/extract-cert.c|OPENSSL_VERSION_NUMBER >= 0x30000000L|构建修正: extract-cert 适配 OpenSSL 3|openssl3"
   "buildfix/0004-kshrinkd-null-memcg.patch|mm/vmscan.c|memcg && !mem_cgroup_disabled\(\)|构建修正: kshrinkd 传 NULL memcg 导致空指针|always"
+  "buildfix/0005-vkms-gem-fault-vm-fault-t.patch|drivers/gpu/drm/vkms/vkms_gem.c|vm_fault_t vkms_gem_fault|构建修正: vkms gem fault 返回 vm_fault_t|always"
+  "buildfix/0006-vkms-driver-render.patch|drivers/gpu/drm/vkms/vkms_drv.c|DRIVER_RENDER|构建修正: vkms 声明 DRIVER_RENDER 以产生 renderD128|always"
   "resukisu/0001-manual-hooks.patch|fs/stat.c|ksu_handle_stat|reSukiSU: manual hook（stat/exec/faccessat/reboot）|always"
   "resukisu/0002-selinux-symbol-exports.patch|security/selinux/selinuxfs.c|^ssize_t \(\*const write_op\[\]\)|reSukiSU: SELinux 静态符号导出|always"
 )
