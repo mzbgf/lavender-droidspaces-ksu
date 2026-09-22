@@ -81,9 +81,19 @@ SUBSYSTEM=="drm", ENV{DEVTYPE}=="drm_minor", ENV{MODALIAS}="platform:vkms"
 
 ## 六、当前唯一未闭合项（下一步）
 
-**Mesa 的 EGL/GBM 在 vkms 上建 screen 失败**（`DRI2: failed to create screen`）。已排除：文件缺失、依赖缺失、PCI 假设（两处都已修）、surfaceless 误判。
+**Mesa 的 EGL/GBM 在 vkms 上建 screen 失败**（`DRI2: failed to create screen`）。已排除：文件缺失、依赖缺失、PCI 假设（两处都已修）、surfaceless 误判、垫片/libgallium 版本不匹配（已改用同源构建）。
 
-剩下的原因是 **lfdevs 的 `libdril_dri.so` 加载器垫片与其 `libgallium` 的 ABI 配对**：我用自配 meson 参数编出的 `libgallium-26.1.0-devel.so` 与他们的 26.3 垫片不匹配（垫片按内部结构调用 `driCreateNewScreen3` 等接口）。**解决办法**：用 lfdevs 自己的构建配置（`.github/workflows/build-debian.yml` 引用的上游构建脚本）重编 Mesa，使垫片与 libgallium 同源同版，并带上上述两个修复。
+**正确的 Mesa 构建路线**（实测，务必照此）：
+- 用 lfdevs 的 **`adreno-debian-trixie` 分支**（Debian 打包布局，含 `debian/`）；
+  `adreno-main` 与发布 tag **都没有 `debian/`**，`gbp buildpackage` 会直接失败
+- 依赖用 `mk-build-deps -i debian/control`（**不要**把 `mk-build-deps` 写进 apt 包名——
+  它不是独立包，会让整个 apt 事务失败）
+- 构建：`origtargz` + `dpkg-buildpackage -us -uc -b`
+- 产物的**正确包名**：`libgl1-mesa-dri`（DRI 驱动 + `libdril` 垫片）、`mesa-libgallium`、
+  `libegl-mesa0`、`libgbm1`、`libglx-mesa0`、`libosmesa6`、`mesa-va-drivers`、
+  `mesa-vdpau-drivers`、`mesa-vulkan-drivers` —— 其中前两个是关键，缺了就会
+  `failed to create dri2 screen`
+- 带上本文第四节的两个修复再构建
 
 ## 七、渲染链路的完整判据（通过即为达成）
 
