@@ -345,12 +345,13 @@ DMA-BUF import extension ... present
 | 合成器 | 现成程度 | 状态 |
 |---|---|---|
 | Weston（参考实现） | anland 官方 `backend-anland` | ✅ **真机出画**（壁纸/面板/指针/Wayland Terminal 窗口可见） |
-| KDE/KWin Wayland | anland 现成 `backend-anland`（`producers/kde/`） | ✅ **真机出画 + 判据通过**：`OpenGL core profile renderer: FD512`、`OpenGL ES profile renderer: FD512`（对 `WAYLAND_DISPLAY=wayland-0` 查 `eglinfo`） |
-| wlroots 系（sway / hyprland） | 无现成 port | 待写：vendor `display_producer` + 实现 `backend-anland` |
-| niri（smithay，非 wlroots） | 无现成 port | 同上 |
+| KDE/KWin Wayland | anland 现成 `backend-anland`（`producers/kde/`） | ✅ **完整 Plasma 桌面真机出画**，`OpenGL ES profile renderer: FD512` |
+| **wlroots 系（sway）** | 自写 `backend/anland/`（见第八节） | ✅ **真机出画 + 三条判据全过**：`GL renderer: FD512`、`zwp_linux_dmabuf_v1` v4、swaybar/壁纸/指针可见 |
+| niri（smithay） | 待写 `backend/anland/` | 进行中 |
+| hyprland | 已迁移到 **Aquamarine**（不再是 wlroots） | 需单独的 Aquamarine backend，与 wlroots 那份不同源 |
 
-Weston / KWin 两条通了，说明 **渲染（a5xx/kgsl）→ dmabuf 导入 → 上屏（SurfaceFlinger）** 整条链
-在本机是活的；剩下两家都是「换一个 producer 前端」，不再是「赌硬件能不能行」。
+Weston / KWin / sway 三条通了，说明 **渲染（a5xx/kgsl）→ dmabuf 导入 → 上屏（SurfaceFlinger）→ client 侧 EGL**
+整条链在本机是活的。
 
 KWin 冒烟用法（裸合成器，不等 plasma-workspace）：
 
@@ -394,8 +395,37 @@ producer 的调用契约（详见 `display_producer.h`）：
 
 ### 8.2 wlroots（sway / hyprland 共用）
 
-容器内是 **sway 1.10.1 + libwlroots-0.18（0.18.2）**。backend 是**编进 `libwlroots.so`**
-的（不是插件），所以只要重编这个库，**stock sway 不用重编**。
+**已实现并真机跑通（sway 1.10.1 + libwlroots-0.18）**，产物与补丁：
+`backend/anland/`（11 个新文件，其中 5 个是 vendor 的 producer 库）+
+`include/wlr/backend/anland.h` + `backend/backend.c` / `backend/meson.build` 的注册。
+用 `WLR_BACKENDS=anland WLR_RENDERER=gles2 sway` 启动。
+
+真机首测暴露了两个**必须修**的点，照抄代码前先看这里：
+
+**A. gles2 只吃 DMABUF，而本机没有能 PRIME 导出的 DRM 节点。**
+`render/gles2/renderer.c` 里 `wlr_renderer_init(..., WLR_BUFFER_CAP_DMABUF)` —— gles2
+**只**认 dmabuf。而 `wlr_allocator_autocreate` 的三条路在本机全部死路：
+
+| allocator | 为什么不行 |
+|---|---|
+| gbm | 要 PRIME fd 导出；`/dev/dri/renderD128` 是 vkms，报 `PRIME export not supported` |
+| shm | 要 `WLR_BUFFER_CAP_SHM\|DATA_PTR`，gles2 不给 |
+| drm dumb | 要 `drmIsMaster()`，渲染节点不是 |
+
+→ `Failed to create allocator`。**解法：anland 自带一个 `wlr_allocator`，把 consumer 的
+dmabuf 当 buffer 池发出去**（也就是 weston/KWin 那条直渲路径）。判据：日志出现
+`anland: created dmabuf allocator over the consumer pool`。
+
+⚠️ 钩子不能用 `wlr_backend_is_anland(backend)`：**sway 传进来的是 multi backend**
+（anland + 它自带的 headless 输出），那个判断恒为 false。用全局 `wlr_anland_current` 认实例。
+
+**B. `new_output` 必须等 dmabuf import 完成再发。**
+sway 一看到 output 就去建 swapchain；此时池子还是空的（consumer 可能还没连上），
+`create_buffer` 只能返回 NULL → `Failed to allocate buffer` → 输出被判无效。
+解法：`wlr_anland_output` 上挂 `announced` 标志，`try_exit_fallback()` 成功、
+`import_buffers()` 拿到 `buf_count > 0` 之后才 `wl_signal_emit_mutable(new_output)`。
+
+构建（容器内，缺包装上即可）：
 
 | 改动 | 说明 |
 |---|---|
