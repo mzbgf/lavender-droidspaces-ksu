@@ -1,0 +1,14 @@
+prefix=/usr
+exec_prefix=${prefix}
+bindir=${exec_prefix}/bin
+
+Name: Xwayland
+Description: X Server for Wayland (packaging shim for wlroots 0.18)
+Version: 24.1.6
+Libs:
+Cflags:
+xwayland=${bindir}/Xwayland
+have_listenfd=true
+have_no_touch_pointer_emulation=true
+have_force_xrandr_emulation=true
+have_terminate_delay=true
