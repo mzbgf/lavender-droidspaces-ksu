@@ -340,6 +340,43 @@ buffer_ready eventfd → consumer_ready = true → queue_redraw() → render() �
 consumer 失去自愈能力（真掉线也不重连）。真路仍是改源码：输入/输出事件发送失败
 只丢事件，不该拆显示连接。
 
+### 5.3c 根因：两侧 `struct buf_info` 尺寸不一致（20 ↔ 28 字节）
+
+**这是 niri 全黑的真正根因**，也解释了此前一连串「握手成但不渲染 / 200ms 空转」。
+lfdevs 5.13.3 的 consumer（线上真身）与 **KWin 补丁里 vendor 的那份旧 `protocol.h`**
+定义的 `struct buf_info` 不一样：
+
+| 来源 | 字段 | `sizeof` |
+|---|---|---|
+| consumer（`app/src/main/jni/anland_core/common/protocol.h`） | `stride, width, height, format, modifier, offset` | **28** |
+| KWin 补丁 vendor 的（`src/backends/anland/protocol.h`） | `stride, format, modifier, offset` | **20** |
+
+少了 `width` / `height` 两个字段。于是 producer 的 `receive_dmabufs()`：
+
+```c
+int count = dhdr.size / sizeof(struct buf_info);   // 112 / 20 = 5
+if (count != fd_count) return -1;                   // 5 != 4 → 拒收
+```
+
+`dhdr.size` 是 consumer 按**它自己的** `sizeof` 算的（4 × 28 = 112），
+producer 按 20 一除得 5，与 `fd_count=4` 对不上 → **每一轮都拒收**，
+`try_exit_fallback` 永远失败 → 没有 dmabuf → 不渲染 → 全黑。
+
+**修法：producer 侧一律改用 consumer 那份 `protocol.h`**（它才是线上的真身）。
+
+判据（`contrib/anland/tests/` 那个 step-probe 打的）：
+
+```
+PROBE: recv_fds n=8 fd_count=4 dhdr.type=200 dhdr.size=112 (BUFS_READY=200)
+PROBE: receive_dmabufs OK buf_count=4          ← 修好后
+[00] try_exit_fallback=0 buf_count=4 ... still_fallback=0
+SUCCESS after 1 attempt(s)
+  buf[0..3] fmt=1 stride=4352 mod=0            ← ABGR8888 / LINEAR
+```
+
+`dhdr.size % 28 == 0` 且 `dhdr.size / 28 == fd_count` 才是对的；只要出现
+`receive_dmabufs FAILED` 而 `recv_fds` 的三项都正常，就是这条。
+
 ### 5.4 合成器启动环境（容器内）
 
 `/usr/local/bin/start-anland-weston` 与 `start-anland-plasma` 已写入容器，核心是：

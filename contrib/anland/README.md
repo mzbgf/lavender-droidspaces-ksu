@@ -33,3 +33,14 @@ wlroots 那份已真机跑通：`WLR_BACKENDS=anland WLR_RENDERER=gles2 sway` �
 但**画面全黑** —— 卡在 `push_input_event` 一失败就拆显示连接的共病
 （见 `docs/WAYLAND-ON-LAVENDER.md` 5.3b）。sway / Plasma 有静态内容尚能出画，
 niri 依赖 `buffer_ready` 才重绘，握手一空转就永远不渲染。
+
+## ⚠️ `protocol.h` 必须用 consumer 那份（28 字节 `buf_info`）
+
+`producer-lib/protocol.h` 已替换为 lfdevs consumer 的真身
+（`stride, width, height, format, modifier, offset` = 28 字节）。
+**KWin 补丁里 vendor 的那份是旧版**（少了 `width`/`height`，20 字节），照抄它会让
+`receive_dmabufs()` 的 `dhdr.size / sizeof(buf_info)` 算出 5 而 `fd_count` 是 4，
+每一轮都拒收 → 没有 dmabuf → 全黑。详见 `docs/WAYLAND-ON-LAVENDER.md` 5.3c。
+
+`tests/anland-step-probe.c` 是定位这个 bug 用的分步探针（打印 `pickup_fds` 与
+`receive_dmabufs` 各自的成败），真机上对着活的 daemon + consumer 跑即可。
