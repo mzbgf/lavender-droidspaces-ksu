@@ -123,7 +123,7 @@ FD_FORCE_KGSL=1 XWAYLAND_FORCE_KGSL_SURFACELESS=1
 等按发行版分的包）。不要自编 Mesa —— 那是死路里的一步，缺上述三个补丁，而且自编的
 meson 前缀极易变成这种「看不见的污染源」。
 
-## 四、硬件上的冷门区（唯一真正的不确定项）
+## 四、硬件上的冷门区（已实测通过 ✅）
 
 lfdevs 的实测支持表只有 **Adreno 660 / 710–750 / 810–840**（全 a6xx+）。
 [Issue #32](https://github.com/lfdevs/mesa-for-android-container/issues/32) 里维护者明说
@@ -131,14 +131,20 @@ lfdevs 的实测支持表只有 **Adreno 660 / 710–750 / 810–840**（全 a6x
 Turnip + Zink。但 Turnip 只支持 a6xx+，我们的 Adreno 512 是 **a5xx**，Turnip 直接不可用
 （实测 `unknown UBWC version 0x0`）。
 
-有利的一面：`freedreno_devices.py` 里**有 `GPUId(510)/GPUId(512)` 的 A5XX 完整定义**，
-且我们已实测跑出 `GL renderer: FD512`。所以 **a5xx 在这条生态里是「有定义、无人实测」**，
-我们是第一台。这是当前最大的未知。
+`freedreno_devices.py` 里有 `GPUId(510)/GPUId(512)` 的 A5XX 完整定义 —— **实测这条冷门区是通的**：
 
-第二个未知：4.19 内核**没有 dma-heap**（5.6+ 才有），只有 ION。#85 的实现里有
-「dma-heap 失败则回退 ION」，但 ION 回退在 4.19 上是否真的可用**未验证**。
+| 未知项 | 结论 | 证据 |
+|---|---|---|
+| a5xx 能否走 anland 的 surfaceless/kgsl 路径 | **能** | `GL_RENDERER=FD512`、`EGL 1.5`、`dma_buf_import=YES`、`dma_buf_import_modifiers=YES`、Mesa 26.3.0-devel |
+| 4.19 无 dma-heap 只有 ION，consumer 能否拿到 dmabuf | **能** | `collected 4 dma-bufs`（AHardwareBuffer→gralloc→ION，1080x2340，`modifier=0` LINEAR） |
 
-## 五、Droidspaces 上的实际接线（已落地）
+结论：**a5xx 不是这条生态的死区**，只是没人实测过。我们现在是第一台有完整记录的。
+
+## 五、Droidspaces 上的实际接线（已落地，真机出画 ✅）
+
+**判据已达成**：Weston + `backend-anland` 在本机完整跑通并出画 ——
+`GL renderer: FD512`、`dmabuf support: modifiers`、桌面/面板/指针/Wayland Terminal
+窗口均实机可见。下面三个坑是这条链路上真正的拦路石。
 
 ### 5.1 三端组件
 
@@ -178,7 +184,58 @@ Unix 域套接字**跟随符号链接**，两端零配置：app 走默认路径�
 `ANLAND_SOCKET=/opt/anland/display_daemon.sock`。
 （`/data/local` 是 `drwxr-x--x`，共享 UID `com.termux` 可穿越。）
 
-### 5.3 合成器启动环境（容器内）
+### 5.3 两个拦路石（不修必黑屏/必崩）
+
+**坑 4：daemon 必须与 APK 同版本，fd 槽位数会变。**
+Y700 fork 的 `display_daemon` 走 **4 fd**（`buf_ready / refresh_done / data / shm`），
+lfdevs 5.13.3 的 consumer 走 **5 fd**（`buf_ready / fence / data / shm / audio`）。
+错位后 `sv[1]` 到不了 producer，`data_fd` 是断的 → `push_dmabufs_internal` 必失败 →
+`enter_fallback` → producer 的 `RECONNECT_INTERVAL_MS=200` 定时器反复握手，
+表现为 daemon 日志疯狂刷 `fds delivered` ↔ `consumer re-deposited`，
+consumer 日志每 200ms 一对 `exit fallback triggered` / `fallback triggered`。
+
+判据：daemon 打 `consumer connected, N fds`，**N 必须是 5**（4 就是错版本）。
+正确的 daemon 在 `anland_5.13.3_aarch64.deb` 里（`ar x` + `tar -xf data.tar.xz`，
+路径 `data/data/com.termux/files/usr/bin/anland`）；Y700 的 `magisk_module/display_daemon`
+**不要用**。
+
+**坑 5：producer 送来的 fence fd 会让 SurfaceFlinger 直接 abort。**
+`refresh_done()` 把 producer 经 SCM_RIGHTS 送来的 kgsl sync_file 原样交给
+`ANativeWindow_queueBuffer`，本机这套 4.19/CAF 的 SF 不认这个 fence：
+
+```
+F BLASTBufferQueue: acquireNextBufferLocked failed to apply transaction. status=-2147483646
+F libc: Fatal signal 6 (SIGABRT)          ← LOG_ALWAYS_FATAL，app 渲染线程必崩
+```
+
+判据：`collect_dmabufs` 里的 `queueBuffer(win, anb, -1)` 一直没事，
+渲染循环里 `queueBuffer(window, anb, rfence)` 一进首帧就崩 —— 差异只有这个 fence。
+（weston 随后还会因为 consumer 已死、它还在画已释放的 dmabuf 而 SIGSEGV，那是连锁反应。）
+
+**当前处置**（二进制补丁，未重编 APK）：把 `libanland_consumer.so` 里
+`refresh_done` 提取 fence fd 的那条 `ldr w0, [x8, #0x10]` 换成 `mov w0, #-1`。
+等待语义完整保留（仍阻塞等 producer 的 render-done 消息），只是**不再把 fd 下传给 SF**，
+退化为 `queueBuffer(..., -1)` 即 "ready now"。实测出画正常、零崩溃。
+
+```sh
+# VMA 0xecd8 → 文件偏移 0xecd8-0x4000 = 0xacd8（.text 的 LOAD 段 vaddr-off 差 0x4000）
+# 原指令 ldr w0,[x8,#0x10] = 0xb9401100 → 改 mov w0,#-1 = 0x12800000
+python3 - <<'PY'
+import struct
+p = "libanland_consumer.so"
+d = bytearray(open(p, "rb").read())
+off = 0xecd8 - 0x4000
+assert d[off:off+4] == bytes.fromhex("001140b9")
+d[off:off+4] = struct.pack("<I", 0x12800000)
+open(p, "wb").write(d)
+PY
+# 放回 /data/app/~~*~~/com.anland.termux-*/lib/arm64/libanland_consumer.so，force-stop app
+```
+
+正路是改 `native_consumer.c` 里 `refresh_done()` 的返回值处理（拿到 fence 后
+`close()` 掉并返回 -1）再用 NDK 重编 APK；二进制补丁是省掉 NDK 的等效近路。
+
+### 5.4 合成器启动环境（容器内）
 
 `/usr/local/bin/start-anland-weston` 与 `start-anland-plasma` 已写入容器，核心是：
 
@@ -192,7 +249,7 @@ weston --backend=anland --renderer=gl --disp-sock=$ANLAND_SOCKET --socket=waylan
 dbus-run-session startplasma-wayland
 ```
 
-### 5.4 其余接线
+### 5.5 其余接线
 
 | 接线 | 说明 |
 |---|---|
@@ -225,23 +282,26 @@ anland 不经 KMS，没有 `Timeout waiting session to become active` 这类问�
 
 ## 七、达成判据
 
-**渲染**（三条合成器都必须满足）：
+**渲染**（每条合成器都必须满足）：
 
 ```
 GL renderer: FD512                    ← 真 GPU，无 llvmpipe/softpipe
 DMA-BUF import extension ... present
 ```
 
-**上屏**：合成器保持运行、画面出现在 Android 显示端（Anland 的 APK / Droidspaces 显示面），触摸可交互。
+**上屏**：合成器保持运行、画面实机可见、触摸可交互。
 
-**三家**：
+**进度**：
 
-| 合成器 | 现成程度 | 做法 |
+| 合成器 | 现成程度 | 状态 |
 |---|---|---|
-| KDE/KWin Wayland | anland 有现成 `backend-anland`（`producers/kde/`） | 直接用，**先打通这条**（一次性验证 a5xx + ION 的 dmabuf 上屏） |
-| Weston | 现成，参考实现 | 作对照组 |
-| wlroots 系（sway / hyprland） | 无现成 port | 按 anland 的 producer 移植指南：vendor `display_producer` 库 + 实现 `backend-anland` |
+| Weston（参考实现） | anland 官方 `backend-anland` | ✅ **真机出画**（桌面/面板/指针/Wayland Terminal 窗口均可见，`GL renderer: FD512`） |
+| KDE/KWin Wayland | anland 现成 `backend-anland`（`producers/kde/`，70KB 补丁） | 待跑，走同一套接线 |
+| wlroots 系（sway / hyprland） | 无现成 port | 待写：vendor `display_producer` + 实现 `backend-anland` |
 | niri（smithay，非 wlroots） | 无现成 port | 同上 |
+
+Weston 这条通了，说明 **渲染（a5xx/kgsl）→ dmabuf 导入 → 上屏（SurfaceFlinger）** 整条链
+在本机是活的；剩下三家都是「换一个 producer 前端」，不再是「赌硬件能不能行」。
 
 ## 八、实刷与回滚（已验证 ✅）
 
