@@ -184,7 +184,7 @@ Unix 域套接字**跟随符号链接**，两端零配置：app 走默认路径�
 `ANLAND_SOCKET=/opt/anland/display_daemon.sock`。
 （`/data/local` 是 `drwxr-x--x`，共享 UID `com.termux` 可穿越。）
 
-### 5.3 两个拦路石（不修必黑屏/必崩）
+### 5.3 四个拦路石（不修必黑屏/必崩/必画不出）
 
 **坑 6：client 侧 `zwp_linux_dmabuf_v1` 取决于 `ANLAND_DRM_DEVICE` 指向谁。**
 这是让 **Plasma / Qt Quick / 任何 EGL client** 画得出来的开关：
