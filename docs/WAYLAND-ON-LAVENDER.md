@@ -295,13 +295,24 @@ DMA-BUF import extension ... present
 
 | 合成器 | 现成程度 | 状态 |
 |---|---|---|
-| Weston（参考实现） | anland 官方 `backend-anland` | ✅ **真机出画**（桌面/面板/指针/Wayland Terminal 窗口均可见，`GL renderer: FD512`） |
-| KDE/KWin Wayland | anland 现成 `backend-anland`（`producers/kde/`，70KB 补丁） | 待跑，走同一套接线 |
+| Weston（参考实现） | anland 官方 `backend-anland` | ✅ **真机出画**（壁纸/面板/指针/Wayland Terminal 窗口可见） |
+| KDE/KWin Wayland | anland 现成 `backend-anland`（`producers/kde/`） | ✅ **真机出画 + 判据通过**：`OpenGL core profile renderer: FD512`、`OpenGL ES profile renderer: FD512`（对 `WAYLAND_DISPLAY=wayland-0` 查 `eglinfo`） |
 | wlroots 系（sway / hyprland） | 无现成 port | 待写：vendor `display_producer` + 实现 `backend-anland` |
 | niri（smithay，非 wlroots） | 无现成 port | 同上 |
 
-Weston 这条通了，说明 **渲染（a5xx/kgsl）→ dmabuf 导入 → 上屏（SurfaceFlinger）** 整条链
-在本机是活的；剩下三家都是「换一个 producer 前端」，不再是「赌硬件能不能行」。
+Weston / KWin 两条通了，说明 **渲染（a5xx/kgsl）→ dmabuf 导入 → 上屏（SurfaceFlinger）** 整条链
+在本机是活的；剩下两家都是「换一个 producer 前端」，不再是「赌硬件能不能行」。
+
+KWin 冒烟用法（裸合成器，不等 plasma-workspace）：
+
+```sh
+kwin_wayland --no-lockscreen --no-global-shortcuts --socket wayland-0
+# 然后任意 Wayland client 即可：WAYLAND_DISPLAY=wayland-0 weston-terminal
+```
+
+裸 KWin 没有 `org.kde.breeze` 装饰插件，窗口会缺标题栏（`kwin_decorations: Could not locate
+decoration plugin "org.kde.breeze"`）——那只是美观问题，装 `plasma-workspace` 后消失。
+完整 Plasma 会话用 `dbus-run-session startplasma-wayland`。
 
 ## 八、实刷与回滚（已验证 ✅）
 
