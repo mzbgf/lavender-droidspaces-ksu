@@ -108,12 +108,20 @@ FD_FORCE_KGSL=1 XWAYLAND_FORCE_KGSL_SURFACELESS=1
 | [#76](https://github.com/lfdevs/mesa-for-android-container/pull/76) | compositor 不 advertise wl_drm 时回退开 `/dev/kgsl-3d0`；`FD_FORCE_KGSL` 拆分 `control_fd` / GPU fd | `MESA-LOADER: failed to retrieve device information` 告警链 |
 | [#85](https://github.com/lfdevs/mesa-for-android-container/pull/85) | KGSL 的 linear dma-buf import/export（`FD_KGSL_ENABLE_DMABUF=1`），**opt-in** | dmabuf 呈现路径 |
 
-**由此修正一条旧判据**：`EGL_PLATFORM=surfaceless` 在未打补丁的 Mesa 上 fd 为 -1，
-但在打了 #81/#85 的 Mesa 上**正是 anland 的主路径**。旧文档把它判为「判据无效」是
-以偏概全 —— 它只对未打补丁的 Mesa 成立。
+**由此修正两条旧判据**：
+
+1. `EGL_PLATFORM=surfaceless` 在未打补丁的 Mesa 上 fd 为 -1，但在打了 #81/#85 的
+   Mesa 上**正是 anland 的主路径**。旧文档把它判为「判据无效」是以偏概全。
+2. **旧的 `failed to create dri2 screen` 有一个被长期忽略的污染源**：死路实验把自编
+   Mesa 装在了 `/usr/local/lib/aarch64-linux-gnu/`（meson 默认前缀），而
+   `ld.so.conf.d/aarch64-linux-gnu.conf` 里 `/usr/local/...` **排在 `/usr/lib/...` 之前**。
+   于是所有测试实际加载的都是那套自编 26.1.0，lfdevs 的 26.3.0 被完全屏蔽，
+   `ldd` 一看便知。**清掉该目录后，surfaceless + kgsl 立即建 screen 成功**。
+   以后凡是「装了新 Mesa 却症状不变」，先 `ldd` 查是不是被 `/usr/local/lib` 截胡。
 
 **发行版原生 Mesa 一律不够用**，必须用 lfdevs 的构建（Release 里有 `debian_trixie_arm64`
-等按发行版分的包）。不要自编 Debian Mesa 25.0.7 —— 那是死路里的一步，且缺上述三个补丁。
+等按发行版分的包）。不要自编 Mesa —— 那是死路里的一步，缺上述三个补丁，而且自编的
+meson 前缀极易变成这种「看不见的污染源」。
 
 ## 四、硬件上的冷门区（唯一真正的不确定项）
 
@@ -130,14 +138,78 @@ Turnip + Zink。但 Turnip 只支持 a6xx+，我们的 Adreno 512 是 **a5xx**�
 第二个未知：4.19 内核**没有 dma-heap**（5.6+ 才有），只有 ION。#85 的实现里有
 「dma-heap 失败则回退 ION」，但 ION 回退在 4.19 上是否真的可用**未验证**。
 
-## 五、容器侧仍需的接线（已验证 ✅，与架构无关的部分）
+## 五、Droidspaces 上的实际接线（已落地）
+
+### 5.1 三端组件
+
+| 端 | 组件 | 来源 | 部署位置 |
+|---|---|---|---|
+| Android | 显示 app（consumer） | [anland-termux](https://github.com/lfdevs/anland-termux) 的 `AnlandTermux-5.13.3.apk` | 包名 `com.anland.termux`，与 Termux 共享 UID |
+| Android | `display_daemon`（撮合守护） | [anland-Y700-Droidspaces](https://github.com/SeamusCheng/anland-Y700-Droidspaces) 的 `magisk_module/display_daemon`（预编译，bionic，42 KB） | `/data/local/tmp/display_daemon` |
+| 容器 | KWin 6.3.6-95 / Weston 14.0.2-92（均含 `backend-anland`） | anland-termux 5.13.3 的 `kwin_anland-5.13-debian-4_6.3.6-95.zip` / `weston_anland-5.13-debian-14.0.2-92.zip` | Debian 13 容器 |
+| 容器 | XWayland 24.1.6-91（anland 版） | `xwayland_24.1.6-91_arm64.deb` | 同上 |
+| 容器 | Mesa（含 lfdevs #76/#81/#85） | `mesa-for-android-container_26.3.0-devel-20260824_debian_trixie_arm64.tar.gz` | `tar -zxf … -C /` + `ldconfig` |
+
+### 5.2 socket 接线（踩过坑，照此）
+
+**坑 1：容器的 `/tmp` 是独立 tmpfs**，不是 rootfs 的 `/tmp`。往
+`rootfs/tmp/` 写的东西容器里看不见（`droidspaces run cat /tmp/.hostmark` 证实）。
+所以 socket 不能放 `/tmp/anland/`。
+
+**坑 2：APK 的默认 socket 路径写死在 dex 里**：
+
+```
+DEFAULT_SOCKET_PATH = /data/data/com.termux/files/usr/tmp/anland/display_daemon.sock
+```
+
+（`KEY_SOCKET_PATH` 可在 app 设置里改，但默认路径可以零配置。）
+
+**解法**：daemon 监听在 rootfs 的 `/opt/anland/`（容器内即 `/opt/anland/`），
+再在 app 默认路径放一个**符号链接**指过去：
+
+```sh
+R=/data/local/Droidspaces/Containers/debian/rootfs
+setsid /data/local/tmp/display_daemon $R/opt/anland/display_daemon.sock &
+ln -s $R/opt/anland/display_daemon.sock \
+      /data/data/com.termux/files/usr/tmp/anland/display_daemon.sock
+```
+
+Unix 域套接字**跟随符号链接**，两端零配置：app 走默认路径、合成器走
+`ANLAND_SOCKET=/opt/anland/display_daemon.sock`。
+（`/data/local` 是 `drwxr-x--x`，共享 UID `com.termux` 可穿越。）
+
+### 5.3 合成器启动环境（容器内）
+
+`/usr/local/bin/start-anland-weston` 与 `start-anland-plasma` 已写入容器，核心是：
+
+```sh
+export ANLAND_SOCKET=/opt/anland/display_daemon.sock ANLAND=1
+export ANLAND_DRM_DEVICE=/dev/dri/renderD128      # 有 DRM 节点时（本机有）
+export MESA_LOADER_DRIVER_OVERRIDE=kgsl TURNIP_KMD=kgsl GALLIUM_DRIVER=freedreno
+export FD_FORCE_KGSL=1 XWAYLAND_FORCE_KGSL_SURFACELESS=1
+weston --backend=anland --renderer=gl --disp-sock=$ANLAND_SOCKET --socket=wayland-anland
+# 或
+dbus-run-session startplasma-wayland
+```
+
+### 5.4 其余接线
 
 | 接线 | 说明 |
 |---|---|
 | `--gpu` | 映射 `/dev/kgsl-3d0` |
-| `--bind /dev/dri:/dev/dri` | 仅当走 `ANLAND_DRM_DEVICE` 路径时需要（`--gpu` 不含 DRM 节点） |
-| `MESA_LOADER_DRIVER_OVERRIDE=kgsl` | freedreno 走 kgsl 后端 → FD512 |
-| 网络补丁 | `ip route add default via 172.28.0.1 dev eth0 onlink` + `echo nameserver 223.5.5.5 > /etc/resolv.conf`（容器重启会丢） |
+| `--bind /dev/dri:/dev/dri` | `ANLAND_DRM_DEVICE` 路径需要（`--gpu` 不含 DRM 节点） |
+| 网络补丁 | `ip route add default via 172.28.0.1 dev eth0 onlink` + `resolv.conf` 写 223.5.5.5（容器重启会丢） |
+
+**坑 3：apt 会把 Mesa 盖回去。** `apt-get install` 任何拉 `libgl1-mesa-dri` /
+`mesa-libgallium` 的包都会把 `dri/libdril_dri.so` 覆盖回 Debian 自带的 25.0.7，
+lfdevs 的补丁驱动就没了。**装完任何 apt 包后必须重解一次 lfdevs 的 tar**，
+并 `apt-mark hold`：
+
+```sh
+apt-mark hold xwayland kwin-common kwin-data kwin-wayland libkwin6 weston \
+  libweston-14-0 libegl-mesa0 libgbm1 libgl1-mesa-dri libglx-mesa0 \
+  mesa-libgallium mesa-vulkan-drivers
+```
 
 不再需要：seatd / libseat（KMS 会话用）、活动 VT、udev 的 `MODALIAS` 伪造。
 anland 不经 KMS，没有 `Timeout waiting session to become active` 这类问题。
