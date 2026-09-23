@@ -186,6 +186,47 @@ Unix 域套接字**跟随符号链接**，两端零配置：app 走默认路径�
 
 ### 5.3 两个拦路石（不修必黑屏/必崩）
 
+**坑 6：client 侧 `zwp_linux_dmabuf_v1` 取决于 `ANLAND_DRM_DEVICE` 指向谁。**
+这是让 **Plasma / Qt Quick / 任何 EGL client** 画得出来的开关：
+
+| 配置 | `wayland-info` 里的 client 缓冲协议 | 结果 |
+|---|---|---|
+| `ANLAND_DRM_DEVICE=/dev/dri/renderD128`（本机=**vkms 假渲染节点**） | 只有 `wl_shm`，**无** `zwp_linux_dmabuf_v1` / `wl_drm` / syncobj | Qt Quick 建不出 EGL surface：`qt.qpa.wayland: eglSwapBuffers failed with 0x300d (EGL_BAD_SURFACE), surface: 0x0` → `plasmashell` 画不出来 |
+| `ANLAND_NO_DRM_DEVICE=1 EGL_PLATFORM=surfaceless` | **`zwp_linux_dmabuf_v1` v4 出现** | Plasma 桌面/面板/QML 全部正常渲染 |
+
+原因：KWin 的 anland 后端要把一个 **能用的** DrmDevice 交给 KWin 的 client 侧 dmabuf
+反馈探测（`wp_linux_drm_syncobj` / `zwp_linux_dmabuf_feedback`）。我们那个 `renderD128`
+是 vkms —— 有 DRM 节点但不是 GPU 节点，KWin 一探测就放弃、根本不告 `zwp_linux_dmabuf_v1`。
+改成 `ANLAND_NO_DRM_DEVICE=1` 让它走 surfaceless 后，client 侧 dmabuf 反而正常建立。
+
+判据（一条命令）：
+
+```sh
+wayland-info | grep -E 'dmabuf|wl_drm|syncobj'
+# 必须看到 zwp_linux_dmabuf_v1；只有 wl_shm 就是配错了
+```
+
+**因此本机（Droidspaces/LXC）一律用 PRoot 那条配置，不要用 `ANLAND_DRM_DEVICE`**：
+
+```sh
+unset ANLAND_DRM_DEVICE
+export ANLAND_NO_DRM_DEVICE=1 EGL_PLATFORM=surfaceless
+```
+
+（anland 文档把这条标成 "For PRoot container"、把 `ANLAND_DRM_DEVICE=/dev/dri/renderD128`
+标成 "For Chroot/LXC"。在**有真 DRM 渲染节点**的机器上那条才是对的；我们只有 vkms 假节点，
+用那条会把 client 侧 dmabuf 弄没。）
+
+**坑 7：`startplasma-wayland` 起来会先弹 `kscreenlocker_greet` 锁屏**，桌面被挡在后面，
+看起来像「黑屏/没画出来」。判据：日志有 `kscreenlocker_greet: Failed to load lockscreen QML`、
+屏上是「Unlocking session」。禁掉：
+
+```sh
+mkdir -p ~/.config
+printf '[Daemon]\nAutolock=false\nLockOnResume=false\n' > ~/.config/kscreenlockerrc
+pkill -x kscreenlocker_greet      # 已经弹出来的
+```
+
 **坑 4：daemon 必须与 APK 同版本，fd 槽位数会变。**
 Y700 fork 的 `display_daemon` 走 **4 fd**（`buf_ready / refresh_done / data / shm`），
 lfdevs 5.13.3 的 consumer 走 **5 fd**（`buf_ready / fence / data / shm / audio`）。
@@ -241,13 +282,21 @@ PY
 
 ```sh
 export ANLAND_SOCKET=/opt/anland/display_daemon.sock ANLAND=1
-export ANLAND_DRM_DEVICE=/dev/dri/renderD128      # 有 DRM 节点时（本机有）
+# 本机只有 vkms 假渲染节点，必须走 surfaceless（见坑 6）
+unset ANLAND_DRM_DEVICE
+export ANLAND_NO_DRM_DEVICE=1 EGL_PLATFORM=surfaceless
 export MESA_LOADER_DRIVER_OVERRIDE=kgsl TURNIP_KMD=kgsl GALLIUM_DRIVER=freedreno
-export FD_FORCE_KGSL=1 XWAYLAND_FORCE_KGSL_SURFACELESS=1
+export FD_FORCE_KGSL=1 XWAYLAND_FORCE_KGSL_SURFACELESS=1 FD_KGSL_ENABLE_DMABUF=1
+export QT_QPA_PLATFORM=wayland XDG_CURRENT_DESKTOP=KDE XDG_SESSION_DESKTOP=KDE
+
 weston --backend=anland --renderer=gl --disp-sock=$ANLAND_SOCKET --socket=wayland-anland
 # 或
-dbus-run-session startplasma-wayland
+dbus-run-session -- startplasma-wayland
+# 或裸 KWin 冒烟（不等 plasma-workspace）
+kwin_wayland --no-lockscreen --no-global-shortcuts --socket wayland-0
 ```
+
+启动后用 `wayland-info | grep dmabuf` 自检（必须看到 `zwp_linux_dmabuf_v1`）。
 
 ### 5.5 其余接线
 
