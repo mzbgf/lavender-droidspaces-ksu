@@ -448,11 +448,11 @@ DMA-BUF import extension ... present
 | Weston（参考实现） | anland 官方 `backend-anland` | ✅ **真机出画**（壁纸/面板/指针/Wayland Terminal 窗口可见） |
 | KDE/KWin Wayland | anland 现成 `backend-anland`（`producers/kde/`） | ✅ **完整 Plasma 桌面真机出画**，`OpenGL ES profile renderer: FD512` |
 | **wlroots 系（sway）** | 自写 `backend/anland/`（见第八节） | ✅ **真机出画 + 三条判据全过**：`GL renderer: FD512`、`zwp_linux_dmabuf_v1` v4、swaybar/壁纸/指针可见 |
-| niri（smithay） | 待写 `backend/anland/` | 进行中 |
-| hyprland | 已迁移到 **Aquamarine**（不再是 wlroots） | 需单独的 Aquamarine backend，与 wlroots 那份不同源 |
+| **niri（smithay）** | 自写 `src/backend/anland.rs`（见 8.3） | ✅ **真机出画**（waybar / 壁纸 / Important Hotkeys 浮动窗 / 指针）+ 判据：`OpenGL ES profile renderer: FD512`、`zwp_linux_dmabuf_v1` v5、`DrmFourcc(AB24)` + `mod=Linear` |
+| hyprland | 已迁移到 **Aquamarine**（不再是 wlroots） | 未做 —— 需单独的 Aquamarine backend，与 wlroots 那份不同源，属「wlroots 系」之外的第四家 |
 
-Weston / KWin / sway 三条通了，说明 **渲染（a5xx/kgsl）→ dmabuf 导入 → 上屏（SurfaceFlinger）→ client 侧 EGL**
-整条链在本机是活的。
+**目标三家全部真机出画**：KDE/KWin、wlroots 系（sway）、niri。Weston 作为参考实现也通了。
+说明 **渲染（a5xx/kgsl）→ dmabuf 导入 → 上屏（SurfaceFlinger）→ client 侧 EGL** 整条链在本机是活的。
 
 KWin 冒烟用法（裸合成器，不等 plasma-workspace）：
 
