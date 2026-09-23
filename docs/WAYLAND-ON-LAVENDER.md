@@ -300,6 +300,27 @@ event thread started
 
 修法：`push_input_event` 发送失败只该 `return -1` 丢掉这条事件，不该 `enter_fallback()`。
 
+**追记（已实测，不要只改一处）**：把 `push_input_event` 与 `push_input_event_with_length`
+里那两处 `bl enter_fallback`（VMA `0xede8` / `0xef40`，`libanland_consumer.so`）NOP 掉之后，
+配对顺序立刻变了 —— 从「render thread 上 `exit fallback` → 1ms 后 `fallback`」
+变成「**event thread** 上 `event thread started` → 2ms 内 `fallback`」：
+
+```
+exit fallback triggered   tid 11457   ← try_exit_fallback 成功
+event thread started      tid 11739   ← on_exit_fallback 起的 event 线程
+fallback triggered        tid 11739   ← 该线程首次 poll 就失败
+event thread stopped      tid 11739
+```
+
+也就是说 **`enter_fallback` 有多个入口**（`push_input_event*` 三件套 +
+`poll_output_event` / `push_dmabufs_internal` 都会调），只堵输入那条不够。
+下一个要堵的是 event 线程那条：它起来后首次 `poll_output_event` 读 `data_fd`
+即失败 → 拆连接。判据是「`event thread started` 与 `fallback triggered` 同 tid、
+2ms 内配对」。
+
+（fence 那处的二进制补丁见 5.3 坑 5，`refresh_done` 提取 fd 的 `ldr` → `mov w0,#-1`
+是有效的，与本条无关。）
+
 ### 5.4 合成器启动环境（容器内）
 
 `/usr/local/bin/start-anland-weston` 与 `start-anland-plasma` 已写入容器，核心是：
