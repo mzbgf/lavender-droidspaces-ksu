@@ -276,6 +276,30 @@ PY
 正路是改 `native_consumer.c` 里 `refresh_done()` 的返回值处理（拿到 fence 后
 `close()` 掉并返回 -1）再用 NDK 重编 APK；二进制补丁是省掉 NDK 的等效近路。
 
+### 5.3b 共病：`push_input_event` 一失败就拆显示连接（三家共有）
+
+consumer 的 `on_exit_fallback()` 第一件事是 `send_refresh_rate()` →
+`push_input_event()`。后者在 `send_all(data_fd, …)` 失败时**调 `enter_fallback()`** ——
+把整条显示连接拆掉重新握手。语义上就不该如此：输入事件是尽力而为的，
+不该因为它发不出去就毁掉显示。
+
+日志上的指纹（`logcat | grep 'Anland  :'`）是**同一 tid、1 毫秒内的配对**：
+
+```
+exit fallback triggered   ← try_exit_fallback 成功
+fallback triggered        ← 1ms 后，on_exit_fallback 里的 push_input_event 失败
+event thread started
+```
+
+配上 daemon 侧 200ms 一对的 `fds delivered to producer` ↔ `consumer re-deposited 5 fds`。
+判据：只要看到 `exit fallback` 与 `fallback` 在 1~2ms 内同 tid 配对，就是这条，
+**不是** fd 槽位错位（坑 4 的指纹是 daemon 只打 `4 fds`）。
+
+影响：帧回路空转（约 5 次握手/秒）。sway / Plasma 因为有静态内容还能出画，
+但 niri 依赖 `buffer_ready` 才 `queue_redraw()`，握手一空转就**永远不渲染 → 全黑**。
+
+修法：`push_input_event` 发送失败只该 `return -1` 丢掉这条事件，不该 `enter_fallback()`。
+
 ### 5.4 合成器启动环境（容器内）
 
 `/usr/local/bin/start-anland-weston` 与 `start-anland-plasma` 已写入容器，核心是：

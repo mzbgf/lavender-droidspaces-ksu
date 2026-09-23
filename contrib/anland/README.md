@@ -20,3 +20,16 @@ tests/          mock daemon + 冒烟宿主，端到端自检可复跑
 
 wlroots 那份已真机跑通：`WLR_BACKENDS=anland WLR_RENDERER=gles2 sway` →
 `GL renderer: FD512` + `zwp_linux_dmabuf_v1` + 实机出画。
+
+## niri（smithay）
+
+`niri/anland-niri-26.04.patch` 在干净的 niri v26.04 上可重放；
+`niri/ANLAND-NIRI-NOTES.md` 是移植说明（含渲染层取舍与未验证清单）。
+
+用法：`ANLAND=1 niri`。渲染走 smithay 的 `Bind<Dmabuf>`（与 Tty/DRM 同一生产路径），
+帧节奏 consumer 驱动。
+
+⚠️ **当前真机状态**：niri 能连 daemon、建出 `anland-1` 1080x2340@60Hz、起 IPC，
+但**画面全黑** —— 卡在 `push_input_event` 一失败就拆显示连接的共病
+（见 `docs/WAYLAND-ON-LAVENDER.md` 5.3b）。sway / Plasma 有静态内容尚能出画，
+niri 依赖 `buffer_ready` 才重绘，握手一空转就永远不渲染。
