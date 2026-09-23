@@ -11,3 +11,6 @@ Android 端 consumer（`com.anland.termux` 的 `lib/arm64/libanland_consumer.so`
 
 ⚠️ **input-patched 只堵了三个入口里的两个**，event 线程那条仍在（见文档 5.3b 追记）。
 覆盖到 `/data/app/~~*~~/com.anland.termux-*/lib/arm64/libanland_consumer.so` 后 `force-stop` app 生效。
+
+| `libanland_consumer.so.poll-patched` | 5.3b 追记：`poll_output_event` / `..._extend_data` 的 `POLLHUP\|POLLERR` 分支不拆连接（VMA `0xefc8` / `0xf114` 处 `bl enter_fallback` → `nop`，`return -1` → `return 0`） |
+| `libanland_consumer.so.noop-fallback` | **仅判别用，不可交付**：`enter_fallback` 本体打成 `ret`（VMA `0xdfcc`）。实测把 200ms 重握手回路从 139 次/15 秒降到 0，但 niri 画面**仍是黑的** —— 证明回路不是 niri 全黑的原因。它同时废掉了 consumer 的自愈能力，别当修法用 |

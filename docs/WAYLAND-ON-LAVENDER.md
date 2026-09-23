@@ -321,6 +321,25 @@ event thread stopped      tid 11739
 （fence 那处的二进制补丁见 5.3 坑 5，`refresh_done` 提取 fd 的 `ldr` → `mov w0,#-1`
 是有效的，与本条无关。）
 
+**再追记（负面结论，别再走这条路）**：把 `enter_fallback` **本体**打成 `ret`
+（一处顶八处，`libanland_consumer.so` VMA `0xdfcc`）之后，`fallback triggered`
+计数从 139 次/15 秒降到 **0**，200ms 重握手回路彻底消失 —— **但 niri 画面仍然是黑的**。
+
+所以 **回路不是 niri 全黑的原因**。niri 的日志里连 `error binding dmabuf` 都没有，
+说明它的 `render()` 压根没被调用过。问题收窄到 niri 自己的触发链：
+
+```
+buffer_ready eventfd → consumer_ready = true → queue_redraw() → render() → trigger_refresh()
+```
+
+即「consumer 的 `select_dmabuf()` 写 `buf_ready_efd`」到「niri 收到并 `queue_redraw()`」
+这一段没走通（subagent 的 `anland.rs` 里对应 `get_buffer_ready_fd()` 挂 calloop 的那条）。
+下一个要查的是这条 fd 有没有真正被挂上、`eventfd_read` 有没有消费。
+
+注意 `enter_fallback` 打成 `ret` 只是判别手段，**不是可交付修法** —— 它会让
+consumer 失去自愈能力（真掉线也不重连）。真路仍是改源码：输入/输出事件发送失败
+只丢事件，不该拆显示连接。
+
 ### 5.4 合成器启动环境（容器内）
 
 `/usr/local/bin/start-anland-weston` 与 `start-anland-plasma` 已写入容器，核心是：
