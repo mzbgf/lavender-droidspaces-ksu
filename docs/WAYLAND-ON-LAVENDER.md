@@ -363,7 +363,89 @@ kwin_wayland --no-lockscreen --no-global-shortcuts --socket wayland-0
 decoration plugin "org.kde.breeze"`）——那只是美观问题，装 `plasma-workspace` 后消失。
 完整 Plasma 会话用 `dbus-run-session startplasma-wayland`。
 
-## 八、实刷与回滚（已验证 ✅）
+## 八、wlroots / niri 的 `backend-anland` 移植指南
+
+Weston 与 KWin 已有现成 producer。wlroots 系（sway / hyprland）和 niri 需要各写一个
+前端。**这不是「赌硬件」了** —— 渲染（a5xx/kgsl）、dmabuf 导入、client 侧
+`zwp_linux_dmabuf_v1`（坑 6）全部已趟平，剩下是纯软件接线。两者的共性照抄
+anland 的 producer 移植指南（协议 README §10）：**vendor `display_producer` 库（拷贝，
+不要软链接），再实现一个 backend。**
+
+### 8.1 必须 vendor 的 5 个文件（5-fd 版，与 lfdevs 5.13.3 同源）
+
+来源：lfdevs KWin 补丁里的 `src/backends/anland/`（`display_producer.{c,h}`、
+`protocol.h`、`socket_utils.{c,h}`）。**不要**用 Y700 fork 的 4-fd 版（见坑 4）。
+
+producer 的调用契约（详见 `display_producer.h`）：
+
+| 调用 | 时机 |
+|---|---|
+| `connect_to_deamon(&ctx, socket)` | 启动时。**只握手，保持 fallback 态** |
+| `try_exit_fallback(ctx)` | 200ms 定时器里轮询。返回 0 = 拿到 consumer 的 fd + dmabuf，**必须立刻 import** |
+| `get_screen_info` / `get_buf_count` / `get_selected_idx` | 每帧：`idx` 是 consumer 当前选中的缓冲 |
+| `get_dmabuf_fd_at(i)` / `get_dmabuf_info_at(i, &buf_info)` | import 阶段 |
+| `get_buffer_ready_fd(ctx)` | eventfd，consumer 说「画这个 buffer」→ 触发 repaint |
+| `get_data_fd(ctx)` + `poll_input_event(ctx, &ev, ms)` | 输入回传 |
+| **`trigger_refresh(ctx)`** | **每帧画完后必须调**，否则 consumer 5 秒超时进 fallback |
+| `set_fallback_callback` / `is_fallback` / `disconnect` | consumer 掉线时丢弃渲染目标、回到重连循环 |
+
+`buf_info.format` 的 1 = Android `RGBA_8888` = DRM 的 `ABGR8888`，其它按 `XRGB8888`；
+`buf_info.modifier` 恒为 0（LINEAR，见 #85）。
+
+### 8.2 wlroots（sway / hyprland 共用）
+
+容器内是 **sway 1.10.1 + libwlroots-0.18（0.18.2）**。backend 是**编进 `libwlroots.so`**
+的（不是插件），所以只要重编这个库，**stock sway 不用重编**。
+
+| 改动 | 说明 |
+|---|---|
+| 新增 `backend/anland/{backend.c,output.c,meson.build}` + vendor 的 5 个文件 | 模板抄 `backend/headless/`（88+147 行，最简） |
+| `backend/backend.c` 的 `wlr_backend_autocreate` | 认 `WLR_BACKENDS=anland`；`ANLAND=1` 时也优先选它 |
+| `backend/meson.build` | 把 `anland` 编进 `libwlroots` |
+
+`struct wlr_anland_output` 的呈现路径（照 weston 的 `anland_output_repaint`）：
+`idx = get_selected_idx()` → 把 `get_dmabuf_fd_at(idx)` 那块 dmabuf 当渲染目标
+（wlroots 0.18 需要把它包成 `wlr_buffer`，参考 `backend/wayland/output.c` 的做法）→
+按累计 damage 重绘 → `trigger_refresh()`。
+
+构建（容器内，缺包装上即可）：
+
+```sh
+meson setup build --prefix=/usr -Dexamples=false -Dxwayland=enabled
+ninja -C build                      # 产出 libwlroots-0.18.so
+# 覆盖装上后：
+WLR_BACKENDS=anland sway
+```
+
+自检：`wayland-info | grep dmabuf` 必须看到 `zwp_linux_dmabuf_v1`（坑 6），
+`GL renderer: FD512`。
+
+### 8.3 niri（smithay）
+
+niri v26.04 的 backend 是 `src/backend/` 下的 **`enum Backend { Tty, Winit, Headless }`**
++ 分派方法（`init` / `seat_name` / `with_primary_renderer` / `primary_render_node` /
+`render` / `change_vt` / `suspend`…）。**不是 trait，是枚举分派**，所以加一个 variant 即可。
+
+| 改动 | 说明 |
+|---|---|
+| 新增 `src/backend/anland.rs`（`struct Anland`） | 模板抄 `src/backend/headless.rs`（174 行） |
+| `src/backend/mod.rs` | 加 `Anland(Anland)` variant + 每个分派方法一个 match arm |
+| backend 选择处（`main.rs`） | `ANLAND=1` 时构造 `Backend::Anland` |
+
+`Headless` 用的正是 **smithay 的 `GlesRenderer`** —— 和 anland 需要的完全一致，
+所以渲染那层可以照抄 `headless.rs` 的 `add_renderer()`（`GlesRenderer::new(context)` +
+`resources::init` / `shaders::init`）。差异只在「渲染目标」：headless 不上屏，
+anland 要把 consumer 的 dmabuf 塞给 smithay 的 buffer 抽象再 `trigger_refresh()`。
+
+### 8.4 三家共用的验收判据
+
+```
+GL renderer: FD512                                     ← 真 GPU，无 llvmpipe
+wayland-info | grep dmabuf   → zwp_linux_dmabuf_v1     ← client 侧 EGL 能用
+合成器保持运行、画面实机可见、触摸可交互
+```
+
+## 九、实刷与回滚（已验证 ✅）
 
 `fastboot flash boot`。两个坑：
 1. 镜像必须 ≤ boot 分区（lavender 是 64 MiB；ROM 自带 boot.img 比分区大 90 字节，直刷报 `Volume Full`）→ `scripts/make-boot-img.sh` 已自动补齐/截断；
